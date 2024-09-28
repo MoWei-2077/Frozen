@@ -198,7 +198,6 @@ struct appInfoStruct {
     int uid = -1;
     FREEZE_MODE freezeMode = FREEZE_MODE::FREEZER; // [10]:杀死 [20]:SIGSTOP [30]:freezer [40]:配置 [50]:内置
     bool isPermissive = true;      // 宽容的 有前台服务也算前台
-    int delayCnt = 0;              // Binder冻结失败而延迟次数
     int timelineUnfrozenIdx = -1;  // 解冻时间线索引
     bool isSystemApp = true;       // 是否系统应用
     time_t startTimestamp = 0;     // 某次开始运行时刻
@@ -581,8 +580,7 @@ namespace Utils {
         if (ptr) { // "pidNum1 pidNum2 ..."  如果存在多个pid就退出
             char tips[256];
             auto len = snprintf(tips, sizeof(tips),
-                "冻它已经在运行(pid: %s), 当前进程(pid:%d)即将退出，"
-                "请勿手动启动冻它, 也不要在多个框架同时安装冻它模块", buf, getpid());
+                "Frozen已经在运行(pid: %s), 当前进程(pid:%d)即将退出", buf, getpid());
             printf("\n!!! \n!!! %s\n!!!\n\n", tips);
             printException(nullptr, 0, tips, len);
             exit(-2);

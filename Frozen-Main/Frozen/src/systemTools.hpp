@@ -89,13 +89,6 @@ public:
             exit(0);
         }
 
-        int kVersion = kernelVersion.main * 100 + kernelVersion.sub;
-        if (kVersion < 510) {
-            int len = snprintf(tmp, sizeof(tmp), "冻它不支持当前内核版本 %s", kernelInfo.release);
-            Utils::printException(nullptr, 0, tmp, len);
-            exit(0);
-        }
-
         getCpuTempPath();
         InitCPU();
 

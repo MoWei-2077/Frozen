@@ -10,9 +10,9 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 
+namespace fs = std::filesystem;
 #define PACKET_SIZE      128
-//#define NETLINK_TEST     26
-#define NETLINK_TEST     22  // 需要读取 /proc/rekernel/
+#define NETLINK_UNIT_DEFAULT     -1 
 #define USER_PORT        100
 #define MAX_PLOAD        125
 #define MSG_LEN          125
@@ -44,8 +44,6 @@ private:
     uint32_t timelineIdx = 0;
     uint32_t unfrozenTimeline[4096] = {};
 
-    bool isReKernelConnected = false;
-    int binderEventCnt = 0;
 
     int refreezeSecRemain = 60; //开机 一分钟时 就压一次
     std::atomic<int> remainTimesToRefreshTopApp{2};  // 使用原子进行操作
@@ -53,19 +51,15 @@ private:
     static const size_t GET_VISIBLE_BUF_SIZE = 256 * 1024;
     unique_ptr<char[]> getVisibleAppBuff;
 
-    binder_state bs{ -1, nullptr, 128 * 1024ULL };
-
     const char* cgroupV2FreezerCheckPath = "/sys/fs/cgroup/uid_0/cgroup.freeze";
     const char* cgroupV2frozenCheckPath = "/sys/fs/cgroup/frozen/cgroup.freeze";       // "1" frozen
     const char* cgroupV2unfrozenCheckPath = "/sys/fs/cgroup/unfrozen/cgroup.freeze";   // "0" unfrozen
 
     const char* cpusetEventPath = "/dev/cpuset/top-app";
-    //const char* cpusetEventPathA12 = "/dev/cpuset/top-app/tasks";
-    //const char* cpusetEventPathA13 = "/dev/cpuset/top-app/cgroup.procs";
 
     const char* cgroupV1FrozenPath = "/dev/jark_freezer/frozen/cgroup.procs";
     const char* cgroupV1UnfrozenPath = "/dev/jark_freezer/unfrozen/cgroup.procs";
-
+    
     // 如果直接使用 uid_xxx/cgroup.freeze 可能导致无法解冻
     const char* cgroupV2UidPidPath = "/sys/fs/cgroup/uid_%d/pid_%d/cgroup.freeze"; // "1"frozen   "0"unfrozen
     const char* cgroupV2FrozenPath = "/sys/fs/cgroup/frozen/cgroup.procs";         // write pid
@@ -91,8 +85,6 @@ public:
         settings(settings), doze(doze) {
 
         getVisibleAppBuff = make_unique<char[]>(GET_VISIBLE_BUF_SIZE);
-
-        binderInit("/dev/binder");
 
         threads.emplace_back(thread(&Freezer::cpuSetTriggerTask, this)); //监控前台
         threads.emplace_back(thread(&Freezer::binderEventTriggerTask, this)); //binder事件
@@ -373,9 +365,6 @@ public:
         case FREEZE_MODE::FREEZER: 
         case FREEZE_MODE::FREEZER_BREAK: {
             if (workMode != WORK_MODE::GLOBAL_SIGSTOP) {
-                const int res = handleBinder(appInfo, false);
-                if (res < 0 && freeze && appInfo.isPermissive)
-                    return res;
                 handleFreezer(appInfo, freeze);
                 break;
             }
@@ -384,9 +373,6 @@ public:
 
         case FREEZE_MODE::SIGNAL:
         case FREEZE_MODE::SIGNAL_BREAK: {
-            const int res = handleBinder(appInfo, false);
-            if (res < 0 && freeze && appInfo.isPermissive)
-                return res;
             handleSignal(appInfo, freeze ? SIGSTOP : SIGCONT);
         } break;
 
@@ -800,9 +786,6 @@ public:
             freezeit.log(string_view(stateStr.c_str(), stateStr.length));
         }
 
-        if(isReKernelConnected)
-            freezeit.logFmt("Re:Kernel上报次数 %d", binderEventCnt);
-
         stackString<64> tips;
         int tmp = systemTools.runningTime;
         if (tmp >= 3600) {
@@ -855,7 +838,6 @@ public:
 
         for (const int uid : toBackgroundApp) { // 更新倒计时
             isupdate = true;
-            managedApp[uid].delayCnt = 0;
             pendingHandleList[uid] = managedApp[uid].isTerminateMode() ?
                 settings.terminateTimeout : settings.freezeTimeout;
         }
@@ -885,23 +867,7 @@ public:
             }
 
             int num = handleProcess(appInfo, true);
-            if (num < 0) {
-                if (appInfo.delayCnt >= 5) {
-                    handleSignal(appInfo, SIGKILL);
-                    freezeit.logFmt("%s:%d 已延迟%d次, 强制杀死", appInfo.label.c_str(), -num, appInfo.delayCnt);
-                    num = 0;
-                }
-                else {
-                    appInfo.delayCnt++;
-                    remainSec = 15 << appInfo.delayCnt;
-                    freezeit.logFmt("%s:%d Binder正在传输, 第%d次延迟, %d%s 后再冻结", appInfo.label.c_str(), -num,
-                        appInfo.delayCnt, remainSec < 60 ? remainSec : remainSec / 60, remainSec < 60 ? "秒" : "分");
-                    it++;
-                    continue;
-                }
-            }
             it = pendingHandleList.erase(it);
-            appInfo.delayCnt = 0;
 
             appInfo.stopTimestamp = time(nullptr);
             const int delta = appInfo.startTimestamp == 0 ? 0 :
@@ -1133,7 +1099,7 @@ public:
         char buf[TRIGGER_BUF_SIZE];
         while (read(inotifyFd, buf, TRIGGER_BUF_SIZE) > 0) {
             remainTimesToRefreshTopApp.store(REMAIN_TIMES_MAX, std::memory_order_relaxed);
-            usleep(250 * 1000);
+            usleep(100 * 1000);
         }
 
         inotify_rm_watch(inotifyFd, watch_d);
@@ -1168,7 +1134,7 @@ public:
         char buf[TRIGGER_BUF_SIZE];
         while (read(inotifyFd, buf, TRIGGER_BUF_SIZE) > 0) {
            remainTimesToRefreshTopApp.store(REMAIN_TIMES_MAX, std::memory_order_relaxed);
-            usleep(250 * 1000);
+            usleep(100 * 1000);
         }
 
         inotify_rm_watch(inotifyFd, watch_d);
@@ -1181,28 +1147,35 @@ public:
     void binderEventTriggerTask() {
         int skfd;
         int ret;
-        user_msg_info u_info{};
+        user_msg_info u_info;
         socklen_t len;
-        struct sockaddr_nl saddr {}, daddr{};
-        auto umsg = "Hello! Re:Kernel!";
+        struct sockaddr_nl saddr, daddr;
+        char umsg[] = "Hello! Re:Kernel!"; 
 
-        if (access("/proc/rekernel/22", F_OK)) {
-            freezeit.log("ReKernel未安装: /proc/rekernel/22");
+    const std::string path = "/proc/rekernel";
+    int netlinkUnit = NETLINK_UNIT_DEFAULT;
+
+    if (fs::exists(path)) {
+        for (const auto& entry : fs::directory_iterator(path)) {
+            std::string fileName = entry.path().filename().string();
+            netlinkUnit = std::stoi(fileName);
+            break; 
+        }
+    }
+     // 使用宏定义
+    #define netlinkUnit netlinkUnit
+        if (access(path.c_str(), F_OK)) {
+            freezeit.log("ReKernel未安装");
             return;
+        }else{
+            freezeit.log("ReKernel已安装");
         }
 
         struct nlmsghdr* nlh = (struct nlmsghdr*)malloc(NLMSG_SPACE(MAX_PLOAD));
 
-        int failCnt = 0;
         while (true) {
-            if (++failCnt > 100) {
-                auto tips = "ReKernel 工作异常次数超100次，将退出binder事件监听";
-                freezeit.log(tips);
-                fprintf(stderr, "%s", tips);
-                break;
-            }
 
-            skfd = socket(AF_NETLINK, SOCK_DGRAM, NETLINK_TEST);
+            skfd = socket(AF_NETLINK, SOCK_RAW, netlinkUnit);
             if (skfd == -1) {
                 freezeit.log("ReKernel AF_NETLINK 创建失败");
                 sleep(60);
@@ -1213,19 +1186,20 @@ public:
             saddr.nl_family = AF_NETLINK;
             saddr.nl_pid = USER_PORT;
             saddr.nl_groups = 0;
-            if (bind(skfd, (struct sockaddr*)&saddr, sizeof(saddr)) != 0) {
+            if (bind(skfd, (struct sockaddr *)&saddr, sizeof(saddr)) != 0){
                 close(skfd);
 
                 freezeit.log("ReKernel bind 失败");
                 sleep(60);
                 continue;
             }
-
             memset(&daddr, 0, sizeof(daddr));
             daddr.nl_family = AF_NETLINK;
             daddr.nl_pid = 0;
             daddr.nl_groups = 0;
 
+            free(nlh);
+            nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PLOAD));
             memset(nlh, 0, sizeof(struct nlmsghdr));
             nlh->nlmsg_len = NLMSG_SPACE(MAX_PLOAD);
             nlh->nlmsg_flags = 0;
@@ -1234,46 +1208,45 @@ public:
             nlh->nlmsg_pid = saddr.nl_pid;
 
             memcpy(NLMSG_DATA(nlh), umsg, strlen(umsg));
-            //freezeit.logFmt("Send msg to kernel:%s", umsg);
-
             ret = sendto(skfd, nlh, nlh->nlmsg_len, 0, (struct sockaddr*)&daddr, sizeof(struct sockaddr_nl));
-            if (!ret) {
+            if (ret < 0) {
                 close(skfd);
 
                 freezeit.log("ReKernel Failed send msg to kernel");
                 sleep(60);
                 continue;
             }
-            isReKernelConnected = true;
             while (true) {
+                std::this_thread::sleep_for(std::chrono::seconds(20)); // 禁止频繁临时解冻
                 memset(&u_info, 0, sizeof(u_info));
                 len = sizeof(struct sockaddr_nl);
+
                 ret = recvfrom(skfd, &u_info, sizeof(user_msg_info), 0, (struct sockaddr*)&daddr, &len);
-                if (!ret) {
-                    freezeit.log("ReKernel Failed recv msg from kernel!");
+                if (ret < 0) {
+                    //freezeit.log("从ReKernel接收消息失败 等待重连中 请稍等");
                     break;
                 }
 
-                auto ptr = strstr(u_info.msg, "target=");
+                char *ptr = strstr(u_info.msg, "target=");
                 if (ptr != nullptr) {
                     const int uid = atoi(ptr + 7);
-                    if (managedApp.contains(uid) && managedApp[uid].isSignalOrFreezer()
-                        && (!curForegroundApp.contains(uid))
-                        && (!pendingHandleList.contains(uid))) {
-                        unFreezerTemporary(uid);
-                        freezeit.logFmt("Binder解冻 %s", managedApp[uid].label.c_str());
-                    }
-                }
-
-                binderEventCnt++;
+                    //待冻结列队 前台应用 白名单跳过临时解冻
+                    if (!managedApp.contains(uid) || pendingHandleList.contains(uid) || curForegroundApp.contains(uid) || lastForegroundApp.contains(uid))    
+                        continue;
+                    auto& appInfo = managedApp[uid];
+                    if (appInfo.isWhitelist())
+                        continue;
+                       freezeit.logFmt("😋 ReKernel:临时解冻 %s", managedApp[uid].label.c_str());
+                       unFreezerTemporary(uid);                
             }
-
-            close(skfd);
-            sleep(60);
         }
 
-        free(nlh);
+            close(skfd);
+            sleep(10);
     }
+
+        free(nlh);
+}
 
 
     void cycleThreadFunc() {
@@ -1283,7 +1256,7 @@ public:
         getVisibleAppByShell(); // 获取桌面
 
         while (true) {
-            usleep(250 * 1000);
+            usleep(100 * 1000);
 
             if (remainTimesToRefreshTopApp.load(std::memory_order_relaxed) > 0) {
                 remainTimesToRefreshTopApp.fetch_sub(1, std::memory_order_relaxed);
@@ -1403,194 +1376,4 @@ public:
         return buff[0];
     }
 
-    // https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/services/core/java/com/android/server/am/CachedAppOptimizer.java;l=753
-    // https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/services/core/jni/com_android_server_am_CachedAppOptimizer.cpp;l=475
-    // https://cs.android.com/android/platform/superproject/main/+/main:frameworks/native/libs/binder/IPCThreadState.cpp;l=1564
-    // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:common/drivers/android/binder.c;l=5615
-    // https://elixir.bootlin.com/linux/latest/source/drivers/android/binder.c#L5412
-    // 0成功  小于0为操作失败的pid
-    int handleBinder(appInfoStruct& appInfo, const bool freeze) {
-        if (bs.fd <= 0)return 0;
-
-        START_TIME_COUNT;
-
-        // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:common/drivers/android/binder.c;l=5434
-        // 100ms 等待传输事务完成
-        binder_freeze_info binderInfo{ .pid = 0u, .enable = freeze ? 1u : 0u, .timeout_ms = 0u };
-        binder_frozen_status_info statusInfo = { 0, 0, 0 };
-
-        if (freeze) { // 冻结
-            for (size_t i = 0; i < appInfo.pids.size(); i++) {
-                binderInfo.pid = appInfo.pids[i];
-                if (ioctl(bs.fd, BINDER_FREEZE, &binderInfo) < 0) {
-                    int errorCode = errno;
-
-                    // ret == EAGAIN indicates that transactions have not drained.
-                    // Call again to poll for completion.
-                    switch (errorCode) {
-                    case EAGAIN: // 11
-                        break;
-                    case EINVAL:  // 22  酷安经常有某进程无法冻结binder
-                        break;
-                    default:
-                        freezeit.logFmt("冻结 Binder 发生异常 [%s:%u] ErrorCode:%d", appInfo.label.c_str(), binderInfo.pid, errorCode);
-                        break;
-                    }
-
-                    // 解冻已经被冻结binder的进程
-                    binderInfo.enable = 0;
-                    for (size_t j = 0; j < i; j++) {
-                        binderInfo.pid = appInfo.pids[j];
-
-                        //TODO 如果解冻失败？
-                        if (ioctl(bs.fd, BINDER_FREEZE, &binderInfo) < 0) {
-                            errorCode = errno;
-                            freezeit.logFmt("撤消冻结：解冻恢复Binder发生错误：[%s:%u] ErrorCode:%d", appInfo.label.c_str(), binderInfo.pid, errorCode);
-                        }
-                    }
-                    return -appInfo.pids[i];
-                }
-            }
-
-            usleep(1000 * 200);
-
-            for (size_t i = 0; i < appInfo.pids.size(); i++) {
-                statusInfo.pid = appInfo.pids[i];
-                if (ioctl(bs.fd, BINDER_GET_FROZEN_INFO, &statusInfo) < 0) {
-                    int errorCode = errno;
-                    freezeit.logFmt("获取 [%s:%d] Binder 状态错误 ErrroCode:%d", appInfo.label.c_str(), statusInfo.pid, errorCode);
-                }
-                else if (statusInfo.sync_recv & 0b0010) { // 冻结后发现仍有传输事务
-                    freezeit.logFmt("%s 仍有Binder传输事务", appInfo.label.c_str());
-
-                    // 解冻全部进程
-                    binderInfo.enable = 0;
-                    for (size_t j = 0; j < appInfo.pids.size(); j++) {
-                        binderInfo.pid = appInfo.pids[j];
-
-                        //TODO 如果解冻失败？
-                        if (ioctl(bs.fd, BINDER_FREEZE, &binderInfo) < 0) {
-                            int errorCode = errno;
-                            freezeit.logFmt("撤消冻结：解冻恢复Binder发生错误：[%s:%u] ErrorCode:%d", appInfo.label.c_str(), binderInfo.pid, errorCode);
-                        }
-                    }
-                    return -appInfo.pids[i];
-                }
-            }
-        }
-        else { // 解冻
-            set<int> hasSync;
-
-            for (size_t i = 0; i < appInfo.pids.size(); i++) {
-                statusInfo.pid = appInfo.pids[i];
-                if (ioctl(bs.fd, BINDER_GET_FROZEN_INFO, &statusInfo) < 0) {
-                    int errorCode = errno;
-                    freezeit.logFmt("获取 [%s:%d] Binder 状态错误 ErrroCode:%d", appInfo.label.c_str(), statusInfo.pid, errorCode);
-                }
-                else {
-                    // 注意各个二进制位差别
-                    // https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/services/core/jni/com_android_server_am_CachedAppOptimizer.cpp;l=489
-                    // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:common/drivers/android/binder.c;l=5467
-                    if (statusInfo.sync_recv & 1) {
-                        freezeit.debugFmt("[%s:%d] 冻结期间存在 同步传输 Sync transactions, 杀掉进程", appInfo.label.c_str(), statusInfo.pid);
-                        //TODO 要杀掉进程
-                        hasSync.insert(statusInfo.pid);
-                    }
-                    if (statusInfo.async_recv & 1) {
-                        freezeit.debugFmt("[%s:%d] 冻结期间存在 异步传输（不重要）", appInfo.label.c_str(), statusInfo.pid);
-                    }
-                    if (statusInfo.sync_recv & 0b0010) {
-                        freezeit.debugFmt("[%s:%d] 冻结期间存在“未完成”传输（不重要）TXNS_PENDING", appInfo.label.c_str(), statusInfo.pid);
-                    }
-                }
-            }
-
-
-            if (hasSync.size()) {
-                for (auto it = appInfo.pids.begin(); it != appInfo.pids.end();) {
-                    if (hasSync.contains(*it)) {
-                        freezeit.debugFmt("杀掉进程 pid: %d", *it);
-                        kill(*it, SIGKILL);
-                        it = appInfo.pids.erase(it);
-                    }
-                    else {
-                        it++;
-                    }
-                }
-            }
-
-            for (size_t i = 0; i < appInfo.pids.size(); i++) {
-                binderInfo.pid = appInfo.pids[i];
-                if (ioctl(bs.fd, BINDER_FREEZE, &binderInfo) < 0) {
-                    int errorCode = errno;
-                    freezeit.logFmt("解冻 Binder 发生异常 [%s:%u] ErrorCode:%d", appInfo.label.c_str(), binderInfo.pid, errorCode);
-
-                    char tmp[32];
-                    snprintf(tmp, sizeof(tmp), "/proc/%d/cmdline", binderInfo.pid);
-                        
-                    freezeit.logFmt("cmdline:[%s]", Utils::readString(tmp).c_str());
-
-                    if (access(tmp, F_OK)) {
-                        freezeit.logFmt("进程已不在 [%s:%u] ", appInfo.label.c_str(), binderInfo.pid);
-                    }
-                    //TODO 再解冻一次，若失败，考虑杀死？
-                    else if (ioctl(bs.fd, BINDER_FREEZE, &binderInfo) < 0) {
-                        errorCode = errno;
-                        freezeit.logFmt("重试解冻 Binder 发生异常 [%s:%u] ErrorCode:%d", appInfo.label.c_str(), binderInfo.pid, errorCode);
-                    }
-                }
-            }
-        }
-
-        END_TIME_COUNT;
-        return 0;
-    }
-
-    void binder_close() {
-        munmap(bs.mapped, bs.mapSize);
-        close(bs.fd);
-        bs.fd = -1;
-    }
-
-    void binderInit(const char* driver) {
-        bs.fd = open(driver, O_RDWR | O_CLOEXEC);
-        if (bs.fd < 0) {
-            freezeit.logFmt("Binder初始化失败 路径打开失败：[%s] [%d:%s]", driver, errno, strerror(errno));
-            return;
-        }
-
-        struct binder_version b_ver { -1 };
-        if ((ioctl(bs.fd, BINDER_VERSION, &b_ver) < 0) ||
-            (b_ver.protocol_version != BINDER_CURRENT_PROTOCOL_VERSION)) {
-            freezeit.logFmt("Binder初始化失败 binder版本要求: %d  本机版本: %d", BINDER_CURRENT_PROTOCOL_VERSION,
-                b_ver.protocol_version);
-            close(bs.fd);
-            bs.fd = -1;
-            return;
-        }
-        else {
-            freezeit.logFmt("初始驱动 BINDER协议版本 %d", b_ver.protocol_version);
-        }
-
-        // https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/services/core/jni/com_android_server_am_CachedAppOptimizer.cpp;l=489
-        binder_frozen_status_info info = { (uint32_t)getpid(), 0, 0 };
-        if (ioctl(bs.fd, BINDER_GET_FROZEN_INFO, &info) < 0) {
-            int ret = -errno;
-            freezeit.logFmt("Binder初始化失败 不支持 BINDER_FREEZER 特性 ErrroCode:%d", ret);
-            close(bs.fd);
-            bs.fd = -1;
-            return;
-        }
-        else {
-            freezeit.log("特性支持 BINDER_FREEZER");
-        }
-
-        bs.mapped = mmap(NULL, bs.mapSize, PROT_READ, MAP_PRIVATE, bs.fd, 0);
-        if (bs.mapped == MAP_FAILED) {
-            freezeit.logFmt("Binder初始化失败 Binder mmap失败 [%s] [%d:%s]", driver, errno, strerror(errno));
-            close(bs.fd);
-            bs.fd = -1;
-            return;
-        }
-    }    
 };

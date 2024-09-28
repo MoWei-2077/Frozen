@@ -5,7 +5,7 @@
 
 class Freezeit {
 private:
-    const char* LOG_PATH = "/sdcard/Android/freezeit.log";
+    const char* LOG_PATH = "/sdcard/Android/Frozen.log";
 
     constexpr static int LINE_SIZE = 1024 * 32;   //  32 KiB
     constexpr static int BUFF_SIZE = 1024 * 128;  // 128 KiB
@@ -136,7 +136,7 @@ public:
         toFileFlag = argc > 1;
         if (toFileFlag) {
             if (position)toFile(logCache, position);
-            const char tips[] = "日志已通过文件输出: /sdcard/Android/freezeit.log";
+            const char tips[] = "日志已通过文件输出: /sdcard/Android/Frozen.log";
             toMem(tips, sizeof(tips) - 1);
         }
 
@@ -176,9 +176,6 @@ public:
         fprintf(stderr, "version %s", prop["version"].c_str()); // 发送当前版本信息给监控进程
 
         char res[256];
-        if (__system_property_get("gsm.operator.alpha", res) > 0 && res[0] != ',')
-            logFmt("运营信息 %s", res);
-        if (__system_property_get("gsm.network.type", res) > 0) logFmt("网络类型 %s", res);
         if (__system_property_get("ro.product.brand", res) > 0) {
             logFmt("设备厂商 %s", res);
 
@@ -190,13 +187,6 @@ public:
                 !strncmp(res, "realme", 6) || !strncmp(res, "iqoo", 4))
                 isOppoVivo = true;
         }
-        if (__system_property_get("ro.product.marketname", res) > 0) logFmt("设备型号 %s", res);
-        if (__system_property_get("persist.sys.device_name", res) > 0) logFmt("设备名称 %s", res);
-        if (__system_property_get("ro.system.build.version.incremental", res) > 0)
-            logFmt("系统版本 %s", res);
-        if (__system_property_get("ro.soc.manufacturer", res) > 0 &&
-            __system_property_get("ro.soc.model", res + 100) > 0)
-            logFmt("硬件平台 %s %s", res, res + 100);
     }
 
     void setDebugPtr(uint8_t* ptr) {

@@ -50,14 +50,8 @@ private:
             "com.mfashiongallery.emag",             // 小米画报
             "com.huawei.hwid",                      // HMS core服务
 
-            "cn.litiaotiao.app",                    // 李跳跳
-            "com.litiaotiao.app",                   // 李跳跳
-            "hello.litiaotiao.app",                 // 李跳跳
-            "com.zfdang.touchhelper",               // 跳广告
-            "com.giftedcat.adskiphelper",           // 跳广告
             "com.merxury.blocker",                  // Blocker
             "com.wpengapp.lightstart",              // 轻启动
-            "li.songe.gkd",                         // GKD
             "com.sevtinge.hyperceiler",             // HyperCeiler
 
             "com.topjohnwu.magisk",                 // Magisk
@@ -613,7 +607,6 @@ public:
                 .uid = uid,
                 .freezeMode = isSYS ? FREEZE_MODE::WHITELIST : FREEZE_MODE::FREEZER,
                 .isPermissive = true,
-                .delayCnt = 0,
                 .timelineUnfrozenIdx = -1,
                 .isSystemApp = isSYS,
                 .startTimestamp = 0,
