@@ -103,7 +103,8 @@ constexpr auto FORK_DOUBLE = 1;
 enum class WORK_MODE : uint32_t {
     V2FROZEN = 0,
     V2UID = 1,
-    GLOBAL_SIGSTOP = 2,
+    V1FROZEN = 2,
+    GLOBAL_SIGSTOP = 3,
 };
 
 enum class FREEZE_MODE : uint32_t {

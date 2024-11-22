@@ -17,7 +17,7 @@ private:
             10, //[2] freezeTimeout sec
             4,  //[3] wakeupTimeoutIdx  定时唤醒 参数索引 0-5：关闭, 5m, 15m, 30m, 1h, 2h
             20, //[4] terminateTimeout sec
-            0,  //[5] setMode 设置Freezer模式  0: v2frozen(默认), 1: v2uid, 2: 全局SIGSTOP
+            1,  //[5] setMode 设置Freezer模式  0: v2frozen(默认), 1: v2uid, 2:v1frozen, 3: 全局SIGSTOP
             2,  //[6] refreezeTimeoutIdx 定时压制 参数索引 0-3：关闭, 30m, 1h, 2h
             0,  //[7]
             0,  //[8]
@@ -25,11 +25,11 @@ private:
             1,  //[10] 
             0,  //[11]
             0,  //[12]
-            1,  //[13] 电池监控
+            0,  //[13] 电池监控
             0,  //[14] 电流校准
             0,  //[15] 双电芯
-            1,  //[16] 调整 lmk 参数 仅安卓12-15
-            1,  //[17] 深度Doze
+            0,  //[16] 调整 lmk 参数 仅安卓12-15
+            0,  //[17] 深度Doze
             0,  //[18] 
             1,  //[19]
             0,  //[20]
