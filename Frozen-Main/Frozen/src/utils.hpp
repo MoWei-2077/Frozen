@@ -687,7 +687,13 @@ namespace MAGISK {
         return isdigit(buff[0]) ? atoi(buff) : -1;
     }
 }
-
+namespace Apath {
+      int get_version_code() {
+        int version = -1;
+        Utils::readString("/data/adb/ap/version");
+        return version;
+    }
+}
 // https://github.com/tiann/KernelSU/blob/main/manager/app/src/main/cpp/ksu.cc
 namespace KSU {
     const int CMD_GRANT_ROOT = 0;

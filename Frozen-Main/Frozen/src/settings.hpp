@@ -28,9 +28,9 @@ private:
             0,  //[13] 电池监控
             0,  //[14] 电流校准
             0,  //[15] 双电芯
-            0,  //[16] 调整 lmk 参数 仅安卓12-15
+            0,  //[16] 调整 lmk 参数 仅安卓12-16
             0,  //[17] 深度Doze
-            0,  //[18] 
+            0,  //[18] ReKernel
             1,  //[19]
             0,  //[20]
             0,  //[21]
@@ -73,6 +73,7 @@ public:
     uint8_t& enableDoubleCell = settingsVar[15];       // 双电芯 电流翻倍
     uint8_t& enableLMK = settingsVar[16];              // 调整 lmk 参数 仅安卓11-15
     uint8_t& enableDoze = settingsVar[17];             // 深度Doze
+    uint8_t& enableReKernel = settingsVar[18]; // ReKernel
     //uint8_t& unknown = settingsVar[18];                // 
 
     uint8_t& enableDebug = settingsVar[30];        // 调试日志
@@ -228,7 +229,7 @@ public:
         case 15: // 双电芯
         case 16: // lmk
         case 17: // doze
-        case 18: // xxx
+        case 18: // ReKernel
         case 19: //
         case 20: //
         case 21: //

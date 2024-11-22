@@ -121,6 +121,13 @@ public:
                 sleep(2);
                 versionCode = KSU::get_version_code();
             }
+        } else if (!access("/data/adb/apd", F_OK)) {
+            moduleEnv = "APath";
+            versionCode = Apath::get_version_code();
+            if (versionCode <= 0) {
+                sleep(2);
+                versionCode = Apath::get_version_code();
+            }
         }
         if (versionCode > 0)
             moduleEnv += " (" + to_string(versionCode) + ")";

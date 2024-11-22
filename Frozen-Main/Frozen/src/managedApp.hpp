@@ -54,7 +54,6 @@ private:
             "com.wpengapp.lightstart",              // 轻启动
             "com.sevtinge.hyperceiler",             // HyperCeiler
 
-            "com.topjohnwu.magisk",                 // Magisk
             "org.lsposed.manager",                  // LSPosed
             "name.monwf.customiuizer",              // 米客 原版
             "name.mikanoshi.customiuizer",          // 米客
@@ -75,7 +74,6 @@ private:
             "com.google.android.apps.nexuslauncher",// pixel 桌面
             "com.oppo.launcher",
 
-            "me.weishu.kernelsu",                   // KernelSU
             "top.canyie.dreamland.manager",         // Dreamland
             "com.coloros.packageinstaller",         // 安装包管理
             "com.oplus.packageinstaller",           // 安装包管理

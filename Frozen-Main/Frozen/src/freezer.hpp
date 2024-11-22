@@ -73,8 +73,6 @@ private:
     const char pStopwchan[16] = "ptrace_stop";       // ptrace冻结状态
     const char epoll_wait1_wchan[16] = "SyS_epoll_wait";
     const char epoll_wait2_wchan[16] = "do_epoll_wait";
-    const char binder_wchan[32] = "binder_ioctl_write_read";
-    const char pipe_wchan[16] = "pipe_wait";
 
 public:
     Freezer& operator=(Freezer&&) = delete;
@@ -87,8 +85,10 @@ public:
         getVisibleAppBuff = make_unique<char[]>(GET_VISIBLE_BUF_SIZE);
 
         threads.emplace_back(thread(&Freezer::cpuSetTriggerTask, this)); //监控前台
-        threads.emplace_back(thread(&Freezer::binderEventTriggerTask, this)); //binder事件
         threads.emplace_back(thread(&Freezer::cycleThreadFunc, this));
+        if (settings.enableReKernel){
+            threads.emplace_back(thread(&Freezer::binderEventTriggerTask, this)); //binder事件
+        }
 
         checkAndMountV2();
         switch (static_cast<WORK_MODE>(settings.setMode)) {
@@ -771,14 +771,6 @@ public:
             }
             else if (!strcmp(readBuff, pStopwchan)) {
                 stateStr.appendFmt("🧊ST冻结中(ptrace_stop) %s\n", label.c_str());
-            }
-            else if (!strcmp(readBuff, binder_wchan)) {
-                stateStr.appendFmt("⚠️运行中(Binder通信) %s\n", label.c_str());
-                naughtyApp.insert(uid);
-            }
-            else if (!strcmp(readBuff, pipe_wchan)) {
-                stateStr.appendFmt("⚠️运行中(管道通信) %s\n", label.c_str());
-                naughtyApp.insert(uid);
             }
             else if (!strcmp(readBuff, epoll_wait1_wchan) || !strcmp(readBuff, epoll_wait2_wchan)) {
                 stateStr.appendFmt("⚠️运行中(就绪态) %s\n", label.c_str());
