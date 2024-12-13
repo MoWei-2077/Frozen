@@ -37,11 +37,13 @@
 
 #include <sys/un.h>
 #include <sys/select.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <linux/netlink.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
 #include <sys/mman.h>
 #include <sys/inotify.h>
 #include <sys/sysinfo.h>
@@ -397,6 +399,31 @@ namespace Utils {
         }
         return res;
     }
+    std::string getNumberedFiles(const char* directoryPath) {
+        std::string result;
+        DIR* dir = opendir(directoryPath);
+    
+        if (!dir) {
+            fprintf(stderr, "无法打开目录: %s" ,directoryPath);
+            return result; 
+        }
+   
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (entry->d_type == DT_REG && entry->d_name[0] >= '2' && entry->d_name[0] <= '2') {
+                int fileNum = atoi(entry->d_name);
+                    if (fileNum >= 22 && fileNum <= 26) {
+                    if (!result.empty()) {
+                        result += ", "; 
+                    }
+                    result += entry->d_name; 
+                }
+            } 
+        }
+
+        closedir(dir);
+        return result; 
+    }
 
     int readInt(const char* path) {
         auto fd = open(path, O_RDONLY);
@@ -443,7 +470,9 @@ namespace Utils {
 
     bool writeInt(const char* path, const int value) {
         auto fd = open(path, O_WRONLY);
-        if (fd <= 0) return false;
+        if (fd <= 0){
+            return false;
+        }
 
         char tmp[16];
         auto len = snprintf(tmp, sizeof(tmp), "%d", value);
@@ -547,7 +576,7 @@ namespace Utils {
         if (bufSize == 0)
             bufSize = strlen(exceptionBuf);
 
-        auto fp = fopen("/sdcard/Android/freezeit_crash_log.txt", "ab");
+        auto fp = fopen("/sdcard/Android/Frozen_crash.log", "ab");
         if (!fp) return;
 
         auto timeStamp = time(nullptr);

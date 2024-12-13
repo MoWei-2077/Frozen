@@ -6,11 +6,8 @@
 #include "doze.hpp"
 #include "freezeit.hpp"
 #include "systemTools.hpp"
-#include <linux/netlink.h>
-#include <netinet/tcp.h>
-#include <sys/socket.h>
 
-namespace fs = std::filesystem;
+
 #define PACKET_SIZE      128
 #define NETLINK_UNIT_DEFAULT     -1 
 #define USER_PORT        100
@@ -45,8 +42,10 @@ private:
     uint32_t unfrozenTimeline[4096] = {};
 
 
-    int refreezeSecRemain = 60; //开机 一分钟时 就压一次
-    std::atomic<int> remainTimesToRefreshTopApp{0};  // 使用原子进行操作
+    int refreezeSecRemain = 10; //开机压制
+    int Memory_CompressLog = 1; // 内存压缩日志次数 
+
+    std::atomic<int> remainTimesToRefreshTopApp;  // 使用原子进行操作
 
     static const size_t GET_VISIBLE_BUF_SIZE = 256 * 1024;
     unique_ptr<char[]> getVisibleAppBuff;
@@ -64,7 +63,8 @@ private:
     const char* cgroupV2UidPidPath = "/sys/fs/cgroup/uid_%d/pid_%d/cgroup.freeze"; // "1"frozen   "0"unfrozen
     const char* cgroupV2FrozenPath = "/sys/fs/cgroup/frozen/cgroup.procs";         // write pid
     const char* cgroupV2UnfrozenPath = "/sys/fs/cgroup/unfrozen/cgroup.procs";     // write pid
-
+    
+    const char* ReKernel_Path = "/proc/rekernel";
 
     const char v2wchan[16] = "do_freezer_trap";      // FreezerV2冻结状态
     const char v1wchan[16] = "__refrigerator";       // FreezerV1冻结状态
@@ -90,9 +90,11 @@ public:
             threads.emplace_back(thread(&Freezer::binderEventTriggerTask, this)); //binder事件
         }
 
-        checkAndMountV2();
+        checkFrozenV2(); // 禁止瞎挂载V2(Frozen)
         switch (static_cast<WORK_MODE>(settings.setMode)) {
         case WORK_MODE::V2FROZEN: {
+            MountV2Frozen();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if (checkFreezerV2FROZEN()) {
                 workMode = WORK_MODE::V2FROZEN;
                 freezeit.log("Freezer类型已设为 V2(FROZEN)");
@@ -192,8 +194,6 @@ public:
             if (Utils::readString(fullPath, readBuff, sizeof(readBuff)) == 0)continue;
             const string& package = appInfo.package;
             if (strncmp(readBuff, package.c_str(), package.length())) continue;
-            const char endChar = readBuff[package.length()]; // 特例 com.android.chrome_zygote 无法binder冻结
-            if (endChar != ':' && endChar != 0)continue;
 
             appInfo.pids.emplace_back(pid);
         }
@@ -248,8 +248,6 @@ public:
             if (Utils::readString(fullPath, readBuff, sizeof(readBuff)) == 0)continue;
             const string& package = managedApp[uid].package;
             if (strncmp(readBuff, package.c_str(), package.length())) continue;
-            const char endChar = readBuff[package.length()]; // 特例 com.android.chrome_zygote 无法binder冻结
-            if (endChar != ':' && endChar != 0)continue;
 
             pids[uid].emplace_back(pid);
         }
@@ -294,8 +292,6 @@ public:
             if (Utils::readString(fullPath, readBuff, sizeof(readBuff)) == 0)continue;
             const string& package = managedApp[uid].package;
             if (strncmp(readBuff, package.c_str(), package.length())) continue;
-            const char endChar = readBuff[package.length()]; // 特例 com.android.chrome_zygote 无法binder冻结
-            if (endChar != ':' && endChar != 0)continue;
 
             uids.insert(uid);
         }
@@ -303,7 +299,22 @@ public:
         END_TIME_COUNT;
         return uids;
     }
-
+    void memory_compress(const appInfoStruct& appInfo){
+        if (Memory_CompressLog == 1) {
+            freezeit.log("已开启 [内存压缩]"); 
+            Memory_CompressLog = 0; // 不再输出日志
+        } 
+     // https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/services/core/jni/com_android_server_am_CachedAppOptimizer.cpp;bpv=1;bpt=1;l=274?q=compactProcess&ss=android%2Fplatform%2Fsuperproject%2Fmain&hl=zh-cn
+            const char* action = "内存压缩";
+            const char* compactionType = "file";
+            for (const int pid : appInfo.pids) {
+                char path[64];
+                sprintf(path, "/proc/%d/reclaim", pid);
+                    Utils::writeString(path, compactionType);
+                        if (settings.enableDebug) 
+                            freezeit.logFmt("%s [%s PID:%d]", action, appInfo.label.c_str(), pid);
+            }
+        }
     void handleSignal(const appInfoStruct& appInfo, const int signal) {
         if (signal == SIGKILL) {
             //先暂停 然后再杀，否则有可能会复活
@@ -329,13 +340,12 @@ public:
 
     void handleFreezer(const appInfoStruct& appInfo, const bool freeze) {
         char path[256];
-
+        const char* action = freeze ? "冻结" : "解冻";
         switch (workMode) {
         case WORK_MODE::V2FROZEN: {
             for (const int pid : appInfo.pids) {
                 if (!Utils::writeInt(freeze ? cgroupV2FrozenPath : cgroupV2UnfrozenPath, pid))
-                    freezeit.logFmt("%s [%s PID:%d] 失败(V2FROZEN)",
-                        freeze ? "冻结" : "解冻", appInfo.label.c_str(), pid);
+                    freezeit.logFmt("%s [%s PID:%d] 失败(V2FROZEN)", action, appInfo.label.c_str(), pid);
             }
         } break;
 
@@ -343,15 +353,13 @@ public:
             for (const int pid : appInfo.pids) {
                 snprintf(path, sizeof(path), cgroupV2UidPidPath, appInfo.uid, pid);
                 if (!Utils::writeString(path, freeze ? "1" : "0", 2))
-                    freezeit.logFmt("%s [%s PID:%d] 失败(进程可能已死亡)",
-                        freeze ? "冻结" : "解冻", appInfo.label.c_str(), pid);
+                    freezeit.logFmt("%s [%s PID:%d] 失败(进程可能已死亡)", action, appInfo.label.c_str(), pid);
             }
         } break;
         case WORK_MODE::V1FROZEN: {
             for (const int pid : appInfo.pids) {
                 if (!Utils::writeInt(freeze ? cgroupV1FrozenPath : cgroupV1UnfrozenPath, pid))
-                    freezeit.logFmt("%s [%s PID:%d] 失败(V1FROZEN)",
-                        freeze ? "冻结" : "解冻", appInfo.label.c_str(), pid);
+                    freezeit.logFmt("%s [%s PID:%d] 失败(V1FROZEN)", action, appInfo.label.c_str(), pid);
             }
         } break;
         // 本函数只处理Freezer模式，其他冻结模式不应来到此处
@@ -363,90 +371,95 @@ public:
 
     // < 0 : 冻结binder失败的pid， > 0 : 冻结成功的进程数
     int handleProcess(appInfoStruct& appInfo, const bool freeze) {
-        START_TIME_COUNT;
+    START_TIME_COUNT;
 
-        if (freeze) {
-            getPids(appInfo);
+    // 如果是冻结操作，获取进程的 PID
+    if (freeze) {
+        getPids(appInfo);
+    }
+    else {
+        eraseInvalidPids(appInfo);
+    }
+        if (settings.enableMemoryCompress) {
+            memory_compress(appInfo);
         }
-        else {
-            erase_if(appInfo.pids, [&appInfo](const int pid) {
-                char path[32] = {};
-                
-                //snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
-                //return !Utils::readString(path).starts_with(appInfo.package);
-
-                snprintf(path, sizeof(path), "/proc/%d", pid);
-                struct stat statBuf {};
-                if (stat(path, &statBuf)) return true;
-                return (uid_t)appInfo.uid != statBuf.st_uid;
-                });
-        }
-
-        switch (appInfo.freezeMode) {
-        case FREEZE_MODE::FREEZER: 
-        case FREEZE_MODE::FREEZER_BREAK: {
+    switch (appInfo.freezeMode) {
+        case FREEZE_MODE::FREEZER:
+        case FREEZE_MODE::FREEZER_BREAK:
             if (workMode != WORK_MODE::GLOBAL_SIGSTOP) {
                 handleFreezer(appInfo, freeze);
                 break;
             }
-            // 如果是全局 WORK_MODE::GLOBAL_SIGSTOP 则顺着执行下面
-        }
-
+            // 如果是全局 WORK_MODE::GLOBAL_SIGSTOP，则继续执行
         case FREEZE_MODE::SIGNAL:
-        case FREEZE_MODE::SIGNAL_BREAK: {
+        case FREEZE_MODE::SIGNAL_BREAK:
             handleSignal(appInfo, freeze ? SIGSTOP : SIGCONT);
-        } break;
+            break;
 
-        case FREEZE_MODE::TERMINATE: {
-            if (freeze)
+        case FREEZE_MODE::TERMINATE:
+            if (freeze) 
                 handleSignal(appInfo, SIGKILL);
-            return 0;
-        }
+            return 0; 
 
-        default: { // 刚刚切到白名单，但仍在 pendingHandleList 时，就会执行到这里
-            //freezeit.logFmt("不再冻结此应用：%s %s", appInfo.label.c_str(),
-            //    getModeText(appInfo.freezeMode).c_str());
-            return 0;
-        }
-        }
-
-        if (settings.isWakeupEnable()) {
-            // 无论冻结还是解冻都要清除 解冻时间线上已设置的uid
-            if(0 <= appInfo.timelineUnfrozenIdx && appInfo.timelineUnfrozenIdx < 4096)
-                unfrozenTimeline[appInfo.timelineUnfrozenIdx] = 0;
-
-            // 冻结就需要在 解冻时间线 插入下一次解冻的时间
-            if (freeze && appInfo.pids.size() && appInfo.isSignalOrFreezer()) {
-                int nextIdx = (timelineIdx + settings.getWakeupTimeout()) & 0x0FFF; // [ %4096]
-                while (unfrozenTimeline[nextIdx])
-                    nextIdx = (nextIdx + 1) & 0x0FFF;
-                appInfo.timelineUnfrozenIdx = nextIdx;
-                unfrozenTimeline[nextIdx] = appInfo.uid;
-            }
-            else {
-                appInfo.timelineUnfrozenIdx = -1;
-            }
-        }
-
-        if (freeze && appInfo.needBreakNetwork()) {
-            const auto ret = systemTools.breakNetworkByLocalSocket(appInfo.uid);
-            switch (static_cast<REPLY>(ret)) {
-            case REPLY::SUCCESS:
-                freezeit.logFmt("断网成功: %s", appInfo.label.c_str());
-                break;
-            case REPLY::FAILURE:
-                freezeit.logFmt("断网失败: %s", appInfo.label.c_str());
-                break;
-            default:
-                freezeit.logFmt("断网 未知回应[%d] %s", ret, appInfo.label.c_str());
-                break;
-            }
-        }
-
-        END_TIME_COUNT;
-        return appInfo.pids.size();
+        default: 
+        // 刚刚切到白名单，但仍在 pendingHandleList 时，就会执行到这里
+            return 0; 
     }
 
+    if (settings.isWakeupEnable()) {
+        handleTimeline(appInfo, freeze);
+    }
+
+    if (freeze && appInfo.needBreakNetwork()) {
+        handleNetworkBreak(appInfo);
+    }
+
+    END_TIME_COUNT;
+    return appInfo.pids.size();
+}
+
+void eraseInvalidPids(appInfoStruct& appInfo) {
+    erase_if(appInfo.pids, [&appInfo](const int pid) {
+        char path[32] = {};
+        snprintf(path, sizeof(path), "/proc/%d", pid);
+        struct stat statBuf {};
+        if (stat(path, &statBuf)) return true;
+        return (uid_t)appInfo.uid != statBuf.st_uid;
+    });
+}
+
+void handleTimeline(appInfoStruct& appInfo, const bool freeze) {
+    if (0 <= appInfo.timelineUnfrozenIdx && appInfo.timelineUnfrozenIdx < 4096) {
+        unfrozenTimeline[appInfo.timelineUnfrozenIdx] = 0;
+    }
+
+    if (freeze && appInfo.pids.size() && appInfo.isSignalOrFreezer()) {
+        int nextIdx = (timelineIdx + settings.getWakeupTimeout()) & 0x0FFF; // [ %4096]
+        while (unfrozenTimeline[nextIdx]) {
+            nextIdx = (nextIdx + 1) & 0x0FFF;
+        }
+        appInfo.timelineUnfrozenIdx = nextIdx;
+        unfrozenTimeline[nextIdx] = appInfo.uid;
+    }
+    else {
+        appInfo.timelineUnfrozenIdx = -1;
+    }
+}
+
+void handleNetworkBreak(appInfoStruct& appInfo) {
+    const auto ret = systemTools.breakNetworkByLocalSocket(appInfo.uid);
+    switch (static_cast<REPLY>(ret)) {
+        case REPLY::SUCCESS:
+            freezeit.logFmt("断网成功: %s", appInfo.label.c_str());
+            break;
+        case REPLY::FAILURE:
+            freezeit.logFmt("断网失败: %s", appInfo.label.c_str());
+            break;
+        default:
+            freezeit.logFmt("断网 未知回应[%d] %s", ret, appInfo.label.c_str());
+            break;
+    }
+}
 
     // 重新压制第三方。 白名单, 前台, 待冻结列队 都跳过
     void checkReFreezeBackup() {
@@ -497,8 +510,6 @@ public:
                 if (Utils::readString(fullPath, readBuff, sizeof(readBuff)) == 0)continue;
                 const auto& package = appInfo.package;
                 if (strncmp(readBuff, package.c_str(), package.length())) continue;
-                const char endChar = readBuff[package.length()]; // 特例 com.android.chrome_zygote 无法binder冻结
-                if (endChar != ':' && endChar != 0)continue;
 
                 memcpy(fullPath + 6, file->d_name, 6);
                 strcat(fullPath + 8, "/wchan");
@@ -575,8 +586,6 @@ public:
                 if (Utils::readString(fullPath, readBuff, sizeof(readBuff)) == 0)continue;
                 const auto& package = appInfo.package;
                 if (strncmp(readBuff, package.c_str(), package.length())) continue;
-                const char endChar = readBuff[package.length()]; // 特例 com.android.chrome_zygote 无法binder冻结
-                if (endChar != ':' && endChar != 0)continue;
 
                 memcpy(fullPath + 6, file->d_name, 6);
                 strcat(fullPath + 8, "/wchan");
@@ -637,8 +646,32 @@ public:
     bool checkFreezerV2FROZEN() {
         return (!access(cgroupV2frozenCheckPath, F_OK) && !access(cgroupV2unfrozenCheckPath, F_OK));
     }
+    bool checkReKernel(){
+        return (!access(ReKernel_Path, F_OK));
+    }
+    void MountV2Frozen(){
+        mkdir("/sys/fs/cgroup/frozen/", 0666);
+        mkdir("/sys/fs/cgroup/unfrozen/", 0666);
+        usleep(1000 * 500);
 
-    void checkAndMountV2() {
+        if (checkFreezerV2FROZEN()) {
+            auto fd = open(cgroupV2frozenCheckPath, O_WRONLY | O_TRUNC);
+            if (fd > 0) {
+                write(fd, "1", 2);
+                close(fd);
+            }
+            freezeit.logFmt("设置%s FreezerV2(FROZEN)", fd > 0 ? "成功" : "失败");
+
+            fd = open(cgroupV2unfrozenCheckPath, O_WRONLY | O_TRUNC);
+            if (fd > 0) {
+                write(fd, "0", 2);
+                close(fd);
+            }
+            freezeit.logFmt("设置%s FreezerV2(UNFROZEN)", fd > 0 ? "成功" : "失败");
+            freezeit.log("现已支持 FreezerV2(FROZEN)");
+        }
+    }
+    void checkFrozenV2() {
         // https://cs.android.com/android/kernel/superproject/+/common-android12-5.10:common/kernel/cgroup/freezer.c
 
         if (checkFreezerV2UID())
@@ -646,29 +679,6 @@ public:
 
         if (checkFreezerV2FROZEN()) {
             freezeit.log("原生支持 FreezerV2(FROZEN)");
-        }
-        else {
-            mkdir("/sys/fs/cgroup/frozen/", 0666);
-            mkdir("/sys/fs/cgroup/unfrozen/", 0666);
-            usleep(1000 * 500);
-
-            if (checkFreezerV2FROZEN()) {
-                auto fd = open(cgroupV2frozenCheckPath, O_WRONLY | O_TRUNC);
-                if (fd > 0) {
-                    write(fd, "1", 2);
-                    close(fd);
-                }
-                freezeit.logFmt("设置%s FreezerV2(FROZEN)", fd > 0 ? "成功" : "失败");
-
-                fd = open(cgroupV2unfrozenCheckPath, O_WRONLY | O_TRUNC);
-                if (fd > 0) {
-                    write(fd, "0", 2);
-                    close(fd);
-                }
-                freezeit.logFmt("设置%s FreezerV2(UNFROZEN)", fd > 0 ? "成功" : "失败");
-
-                freezeit.log("现已支持 FreezerV2(FROZEN)");
-            }
         }
     }
 
@@ -715,8 +725,6 @@ public:
             if (Utils::readString(fullPath, readBuff, sizeof(readBuff)) == 0)continue;
             const auto& package = appInfo.package;
             if (strncmp(readBuff, package.c_str(), package.length())) continue;
-            const char endChar = readBuff[package.length()]; // 特例 com.android.chrome_zygote 无法binder冻结
-            if (endChar != ':' && endChar != 0)continue;
 
             uidSet.insert(uid);
             pidSet.insert(pid);
@@ -830,10 +838,8 @@ public:
             if (!curForegroundApp.contains(uid))
                 toBackgroundApp.emplace_back(uid);
 
-        if (newShowOnApp.size() || toBackgroundApp.size())
+        if (newShowOnApp.empty() && toBackgroundApp.empty()) return;
             lastForegroundApp = curForegroundApp;
-        else
-            return;
 
         for (const int uid : newShowOnApp) {
             // 如果在待冻结列表则只需移除
@@ -847,8 +853,10 @@ public:
             appInfo.startTimestamp = time(nullptr);
 
             const int num = handleProcess(appInfo, false);
-            if (num > 0) freezeit.logFmt("☀️解冻 %s %d进程", appInfo.label.c_str(), num);
-            else freezeit.logFmt("😁启动 %s", appInfo.label.c_str());
+            if (num > 0)
+                freezeit.logFmt("☀️解冻 %s %d进程", appInfo.label.c_str(), num);
+            else 
+                freezeit.logFmt("😁打开 %s", appInfo.label.c_str());
         }
 
         for (const int uid : toBackgroundApp) { // 更新倒计时
@@ -892,24 +900,21 @@ public:
             const int total = appInfo.totalRunningTime;
 
             stackString<128> timeStr("运行");
-            if (delta >= 3600)
-                timeStr.appendFmt("%d时", delta / 3600);
-            if (delta >= 60)
-                timeStr.appendFmt("%d分", (delta % 3600) / 60);
+            if (delta >= 3600) timeStr.appendFmt("%d时", delta / 3600);
+            if (delta >= 60) timeStr.appendFmt("%d分", (delta % 3600) / 60);
             timeStr.appendFmt("%d秒", delta % 60);
 
             timeStr.append(" 累计", 7);
-            if (total >= 3600)
-                timeStr.appendFmt("%d时", total / 3600);
-            if (total >= 60)
-                timeStr.appendFmt("%d分", (total % 3600) / 60);
+            if (total >= 3600) timeStr.appendFmt("%d时", total / 3600);
+            if (total >= 60) timeStr.appendFmt("%d分", (total % 3600) / 60);
             timeStr.appendFmt("%d秒", total % 60);
 
             if (num)
                 freezeit.logFmt("%s冻结 %s %d进程 %s",
                     appInfo.isSignalMode() ? "🧊" : "❄️",
                     appInfo.label.c_str(), num, timeStr.c_str());
-            else freezeit.logFmt("😭关闭 %s %s", appInfo.label.c_str(), timeStr.c_str());
+            else 
+                freezeit.logFmt("😭关闭 %s %s", appInfo.label.c_str(), timeStr.c_str());
 
             isupdate = true;
         }
@@ -918,7 +923,6 @@ public:
             updatePendingByLocalSocket();
 
     }
-
 
     void updatePendingByLocalSocket() {
         START_TIME_COUNT;
@@ -1026,7 +1030,20 @@ public:
 
         END_TIME_COUNT;
     }
+    /*
+    void get_Millet_Binder_LocalSocket(){
+        
+        int buff[64];
+        int recvLen = Utils::localSocketRequest(XPOSED_CMD::GET_MILLET_BINDER, nullptr, 0, buff,
+            sizeof(buff));
 
+        int& UidLen = buff[0];
+        if (recvLen <= 0) {
+            freezeit.logFmt("%s() 工作异常, 请确认LSPosed中冻它勾选系统框架, 然后重启", __FUNCTION__);
+            return;
+        }
+    }
+    */
     void getVisibleAppByLocalSocket() {
         START_TIME_COUNT;
 
@@ -1113,8 +1130,7 @@ public:
         constexpr int REMAIN_TIMES_MAX = 2;
         char buf[TRIGGER_BUF_SIZE];
         while (read(inotifyFd, buf, TRIGGER_BUF_SIZE) > 0) {
-            remainTimesToRefreshTopApp.store(REMAIN_TIMES_MAX, std::memory_order_relaxed);
-            usleep(100 * 1000);
+             remainTimesToRefreshTopApp.store(REMAIN_TIMES_MAX, std::memory_order_relaxed);
         }
 
         inotify_rm_watch(inotifyFd, watch_d);
@@ -1141,7 +1157,7 @@ public:
             exit(-1);
         }
 
-        freezeit.log("初始化同步事件: 0xB1");
+        freezeit.log("监听前台应用切换成功");
 
         const int buflen = sizeof(struct inotify_event) + NAME_MAX + 1;
         char buf[buflen];
@@ -1164,49 +1180,42 @@ public:
             constexpr int REMAIN_TIMES_MAX = 2;
             const struct inotify_event* event = reinterpret_cast<const struct inotify_event*>(buf);
             if (event->mask & IN_ALL_EVENTS) {
-               remainTimesToRefreshTopApp = REMAIN_TIMES_MAX;
-               usleep(300 * 1000);
+               remainTimesToRefreshTopApp.store(REMAIN_TIMES_MAX, std::memory_order_relaxed);
+               std::this_thread::sleep_for(std::chrono::milliseconds(90)); 
             }
         }
 
         inotify_rm_watch(fd, wd);
         close(fd);
 
-        freezeit.log("已退出监控同步事件: 0xB0");
+        freezeit.log("已退出监听前台应用切换");
     }
 
     // Binder事件 需要额外magisk模块: ReKernel
     void binderEventTriggerTask() {
+
+        if (checkReKernel()) {
+            freezeit.log("ReKernel已安装");
+        }else{
+            freezeit.log("ReKernel未安装");
+            return;
+        }
         int skfd;
         int ret;
+        int NetLink_UserSock = NETLINK_USERSOCK;
         user_msg_info u_info;
-        socklen_t len;
+        //socklen_t len;
         struct sockaddr_nl saddr, daddr;
         char umsg[] = "Hello! Re:Kernel!"; 
 
-    const std::string path = "/proc/rekernel";
-    int netlinkUnit = NETLINK_UNIT_DEFAULT;
-
-    if (fs::exists(path)) {
-        for (const auto& entry : fs::directory_iterator(path)) {
-            std::string fileName = entry.path().filename().string();
-            netlinkUnit = std::stoi(fileName);
-            break; 
-        }
-    }
-        #define netlinkUnit netlinkUnit
-        if (access(path.c_str(), F_OK)) {
-            freezeit.log("ReKernel未安装");
-            return;
-        }else{
-            freezeit.log("ReKernel已安装");
-        }
-
+        std::string ReKernel_path = Utils::getNumberedFiles(ReKernel_Path);
+        NetLink_UserSock = std::stoi(ReKernel_path);
+        #define NetLink_UserSock NetLink_UserSock
         struct nlmsghdr* nlh = (struct nlmsghdr*)malloc(NLMSG_SPACE(MAX_PLOAD));
 
         while (true) {
 
-            skfd = socket(AF_NETLINK, SOCK_RAW, netlinkUnit);
+            skfd = socket(AF_NETLINK, SOCK_RAW, NetLink_UserSock);
             if (skfd == -1) {
                 freezeit.log("ReKernel AF_NETLINK 创建失败");
                 sleep(60);
@@ -1248,22 +1257,17 @@ public:
                 continue;
             }
             while (true) {
-                std::this_thread::sleep_for(std::chrono::seconds(20)); // 禁止频繁临时解冻
-                memset(&u_info, 0, sizeof(u_info));
-                len = sizeof(struct sockaddr_nl);
 
-                ret = recvfrom(skfd, &u_info, sizeof(user_msg_info), 0, (struct sockaddr*)&daddr, &len);
-                if (ret < 0) {
-                    //freezeit.log("从ReKernel接收消息失败 等待重连中 请稍等");
-                    break;
-                }
+                memset(&u_info, 0, sizeof(u_info));
+                //len = sizeof(struct sockaddr_nl);
 
                 char *ptr = strstr(u_info.msg, "target=");
                 if (ptr != nullptr) {
                     const int uid = atoi(ptr + 7);
-                    //待冻结列队 前台应用 白名单跳过临时解冻
+                    //待冻结列队 前台应用 白名单 黑名单跳过临时解冻
                     if (managedApp.contains(uid) && (!curForegroundApp.contains(uid))
-                        && (!pendingHandleList.contains(uid))) {
+                     && (!pendingHandleList.contains(uid))
+                     && (!managedApp[uid].isBlacklist())) {
                         continue;
                        freezeit.logFmt("😋 ReKernel:临时解冻 %s", managedApp[uid].label.c_str());
                        unFreezerTemporary(uid);       
@@ -1284,12 +1288,15 @@ public:
 
         sleep(1);
         getVisibleAppByShell(); // 获取桌面
-
+        if (settings.enableBootFreezer) checkReFreezeBackup(); // 开机冻结
+        
         while (true) {
-            usleep(300 * 1000);
-
+            /*
+            * 这里没必要休眠太久 重构后的cpuSetTriggerTask会自动堵塞
+            */
+           std::this_thread::sleep_for(std::chrono::milliseconds(90));
            if (remainTimesToRefreshTopApp > 0) {
-                remainTimesToRefreshTopApp--;
+                remainTimesToRefreshTopApp.fetch_sub(1);
                 START_TIME_COUNT;
                 if (doze.isScreenOffStandby) {
                     if (doze.checkIfNeedToExit()) {
@@ -1320,9 +1327,7 @@ public:
             if (doze.isScreenOffStandby)continue;// 息屏状态 不用执行 以下功能
 
             systemTools.checkBattery();// 1分钟一次 电池检测
-            if (checkFreezerV1Frozen()) {
-                checkUnFreeze();// 检查进程状态，按需临时解冻
-            }
+            checkUnFreeze();// 检查进程状态，按需临时解冻
             checkWakeup();// 检查是否有定时解冻
         }
     }
@@ -1366,8 +1371,6 @@ public:
             if (Utils::readString(fullPath, readBuff, sizeof(readBuff)) == 0)continue;
             const auto& package = managedApp[uid].package;
             if (strncmp(readBuff, package.c_str(), package.length())) continue;
-            const char endChar = readBuff[package.length()]; // 特例 com.android.chrome_zygote 无法binder冻结
-            if (endChar != ':' && endChar != 0)continue;
 
             uids.insert(uid);
         }

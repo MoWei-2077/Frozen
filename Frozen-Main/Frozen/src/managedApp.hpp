@@ -33,6 +33,7 @@ private:
             "com.miui.notes",                       // 笔记  冻结会导致系统侧边栏卡住
             "com.miui.calculator",                  // 计算器
             "com.miui.compass",                     // 指南针
+            "io.github.jark006.freezeit",           // 冻它
             "com.miui.mediaeditor",                 // 相册编辑
             "com.miui.personalassistant",           // 个人助理
             "com.miui.vipservice",                  // 我的服务
@@ -715,18 +716,6 @@ public:
         return false;
     }
 
-    bool isTrustedApp(const char* ptr) {
-        const char* prefix[] = {
-                "com.github.",
-                "io.github.",
-        };
-        for (size_t i = 0; i < sizeof(prefix) / sizeof(prefix[0]); i++) {
-            if (Utils::startWith(prefix[i], ptr))
-                return true;
-        }
-        return false;
-    }
-
     void applyCfgTemp() {
         for (auto& appInfo : appInfoMap) {
             if (appInfo.uid < UID_START)continue;
@@ -746,7 +735,7 @@ public:
         for (auto& appInfo : appInfoMap) {
             if (appInfo.uid < UID_START)continue;
 
-            if (isTrustedApp(appInfo.package.c_str()) || whiteListForce.contains(appInfo.package))
+            if (whiteListForce.contains(appInfo.package))
                 appInfo.freezeMode = FREEZE_MODE::WHITEFORCE;
         }
 

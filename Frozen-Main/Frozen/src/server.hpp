@@ -341,7 +341,7 @@ public:
                 }
             }
             if (tips.length())
-                freezeit.logFmt("以下UID的应用不受冻它管理：[%s] 可在冻它配置页搜索UID查看是哪些应用", tips.c_str());
+                freezeit.logFmt("以下UID的应用不受Frozen管理：[%s] 可在Frozen配置页搜索UID查看是哪些应用", tips.c_str());
 
             //auto runningPids = freezer.getRunningPids(changeUidSet);
             //tips.clear();

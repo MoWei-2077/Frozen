@@ -31,8 +31,8 @@ private:
             0,  //[16] 调整 lmk 参数 仅安卓12-16
             0,  //[17] 深度Doze
             0,  //[18] ReKernel
-            1,  //[19]
-            0,  //[20]
+            0,  //[19] 内存压缩
+            0,  //[20] 开机冻结
             0,  //[21]
             0,  //[22]
             0,  //[13]
@@ -42,7 +42,7 @@ private:
             0,  //[27]
             0,  //[28]
             0,  //[29]
-            0,  //[30] Doze调试日志
+            0,  //[30] 调试日志
             0,  //[31]
             0,  //[32]
     };
@@ -74,6 +74,8 @@ public:
     uint8_t& enableLMK = settingsVar[16];              // 调整 lmk 参数 仅安卓11-15
     uint8_t& enableDoze = settingsVar[17];             // 深度Doze
     uint8_t& enableReKernel = settingsVar[18]; // ReKernel
+    uint8_t& enableMemoryCompress = settingsVar[19]; // 内存压缩
+    uint8_t& enableBootFreezer = settingsVar[20]; // 开机冻结
     //uint8_t& unknown = settingsVar[18];                // 
 
     uint8_t& enableDebug = settingsVar[30];        // 调试日志
@@ -230,8 +232,8 @@ public:
         case 16: // lmk
         case 17: // doze
         case 18: // ReKernel
-        case 19: //
-        case 20: //
+        case 19: // 内存压缩
+        case 20: // 开机冻结
         case 21: //
         case 22: //
         case 23: //

@@ -202,7 +202,7 @@ public:
 
         return res[0] ? res[0] - '0' : -1;
     }
-
+    
     void InitLMK() {
         if (!settings.enableLMK || SDK_INT_VER < 30 || SDK_INT_VER > 35)
             return;
@@ -389,6 +389,7 @@ public:
         cpuCoreTotal = sysconf(_SC_NPROCESSORS_CONF);
         cpuCoreOnline = sysconf(_SC_NPROCESSORS_ONLN);
         freezeit.logFmt("全部核心 %d 可用核心 %d", cpuCoreTotal, cpuCoreOnline);
+        
         if (cpuCoreTotal != cpuCoreOnline) {
             stackString<128> tips("当前离线核心 ");
             char tmp[64];
@@ -416,7 +417,7 @@ public:
         cpuCluster = 0;
         for (const auto& [freq, num] : res)
             cpuCluster = cpuCluster * 10 + num;
-
+    
         if (cpuCluster && res.size() < 10) {
             stackString<256> tmp("核心频率");
             for (const auto& [freq, cnt] : res)
@@ -731,7 +732,7 @@ public:
         //     "IN_MOVE_SELF"
         // };
 
-        sleep(4);
+        sleep(3);
 
         char buf[SND_BUF_SIZE];
 
@@ -748,7 +749,7 @@ public:
             exit(-1);
         }
 
-        freezeit.log("初始化同步事件: 0xC0");
+        freezeit.log("监听音乐播放成功");
 
         int playbackDevicesCnt = 0;
         ssize_t readLen;

@@ -230,7 +230,7 @@ public:
     }
 
 
-    int formatTimePrefix() {
+   /* int formatTimePrefix() {
         time_t timeStamp = time(nullptr) + 8 * 3600L;
         int hour = (timeStamp / 3600) % 24;
         int min = (timeStamp % 3600) / 60;
@@ -246,6 +246,41 @@ public:
 
         return 11;
     }
+    */
+    int formatTimePrefix() {
+    time_t timeStamp = time(nullptr) + 8 * 3600L; 
+    struct tm* timeInfo = localtime(&timeStamp);
+
+    int year = timeInfo->tm_year + 1900; 
+    int month = timeInfo->tm_mon + 1; 
+    int day = timeInfo->tm_mday;
+    int hour = (timeStamp / 3600) % 24;
+    int min = (timeStamp % 3600) / 60;
+    int sec = timeStamp % 60;
+
+    lineCache[0] = (year / 1000) % 10 + '0';
+    lineCache[1] = (year / 100) % 10 + '0';
+    lineCache[2] = (year / 10) % 10 + '0';
+    lineCache[3] = year % 10 + '0';
+    lineCache[4] = '.';
+    lineCache[5] = (month / 10) + '0';
+    lineCache[6] = month % 10 + '0';
+    lineCache[7] = '.';
+    lineCache[8] = (day / 10) + '0';
+    lineCache[9] = day % 10 + '0';
+    lineCache[10] = '.';
+    lineCache[11] = (hour / 10) + '0';
+    lineCache[12] = hour % 10 + '0';
+    lineCache[13] = ':';
+    lineCache[14] = (min / 10) + '0';
+    lineCache[15] = min % 10 + '0';
+    lineCache[16] = ':';
+    lineCache[17] = (sec / 10) + '0';
+    lineCache[18] = sec % 10 + '0';
+    lineCache[19] = ' ';
+
+    return 20; 
+}
 
     int formatTimeDebug() {
         time_t timeStamp = time(nullptr) + 8 * 3600L;
