@@ -52,6 +52,11 @@
 #include <sys/prctl.h>
 #include <sys/mount.h>
 #include <sys/system_properties.h>
+#include <android/input.h>
+#include <android/keycodes.h>
+#define BITS_PER_LONG (sizeof(long) * 8)
+#define test_bit(array, bit)    ((array[bit / BITS_PER_LONG] >> bit % BITS_PER_LONG) & 1)
+#define NBITS(x)             ((((x)-1)/BITS_PER_LONG)+1)
 
 using std::set;
 using std::unordered_set;
@@ -467,7 +472,21 @@ namespace Utils {
         readString(path, buff, sizeof(buff));
         return string(buff);
     }
+    bool RemoveFile(const char* path){
+        std::string cmd = "rm -rf ";
+        cmd += path;
 
+        char buffer[128]; 
+        size_t maxLen = sizeof(buffer);
+
+        size_t len = popenRead(cmd.c_str(), buffer, maxLen);
+        
+        if (len == 0){
+            return true;
+        }
+
+        return false;
+    }
     bool writeInt(const char* path, const int value) {
         auto fd = open(path, O_WRONLY);
         if (fd <= 0){
@@ -498,7 +517,7 @@ namespace Utils {
         while (*ptr) ptr++;
         return *(ptr - 1);
     }
-
+   
     bool startWith(const char* prefix, const char* target) {
         int idx = 0;
         while (prefix[idx]) {
@@ -593,7 +612,40 @@ namespace Utils {
             fwrite("\n", 1, 1, fp);
         fclose(fp);
     }
+    static int Is_Event(const struct dirent* Dir){
+        return strncmp("event", Dir->d_name, 5) == 0;
+    }
 
+    std::string GetTouchScreenDevice(){
+        struct dirent** namelist;
+        int ndev = scandir("/dev/input", &namelist, Is_Event, alphasort);
+        if(ndev <= 0){
+            return "";
+        } 
+        for(int i = 0; i < ndev; i++){
+            char fname[64];
+            int fd = -1;
+            unsigned long keybit[NBITS(KEY_CNT)];
+            unsigned long propbit[INPUT_PROP_MAX];
+            snprintf(fname, sizeof(fname), "%s/%s", "/dev/input", namelist[i]->d_name);
+            fd = open(fname, O_RDONLY | O_NONBLOCK);
+            if(fd < 0){
+                continue;
+            }
+            memset(keybit, 0, sizeof(keybit));
+            memset(propbit, 0, sizeof(propbit));
+            ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybit)), keybit);
+            ioctl(fd, EVIOCGPROP(INPUT_PROP_MAX), propbit);
+            close(fd);
+            free(namelist[i]);
+            if(test_bit(propbit, INPUT_PROP_DIRECT) && (test_bit(keybit, BTN_TOUCH) || test_bit(keybit, BTN_TOOL_FINGER))){
+                return std::string(fname);
+            } else if(test_bit(keybit, BTN_TOUCH) || test_bit(keybit, BTN_TOOL_FINGER)){
+                return std::string(fname);
+            }
+        }
+        return "";
+    }
 
     void Init() {
         srand(std::chrono::system_clock::now().time_since_epoch().count());

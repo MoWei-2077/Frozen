@@ -9,7 +9,6 @@
 
 
 #define PACKET_SIZE      128
-#define NETLINK_UNIT_DEFAULT     -1 
 #define USER_PORT        100
 #define MAX_PLOAD        125
 #define MSG_LEN          125
@@ -42,9 +41,9 @@ private:
     uint32_t unfrozenTimeline[4096] = {};
 
 
-    int refreezeSecRemain = 10; //开机压制
+    int refreezeSecRemain = 15; //开机压制
     int Memory_CompressLog = 1; // 内存压缩日志次数 
-
+    int ReKernel_exception; // ReKernel工作异常次数
     std::atomic<int> remainTimesToRefreshTopApp;  // 使用原子进行操作
 
     static const size_t GET_VISIBLE_BUF_SIZE = 256 * 1024;
@@ -59,6 +58,8 @@ private:
     const char* cgroupV1FrozenPath = "/dev/jark_freezer/frozen/cgroup.procs";
     const char* cgroupV1UnfrozenPath = "/dev/jark_freezer/unfrozen/cgroup.procs";
     
+    const char* CheckcgroupV1UnfrozenPath = "/dev/freezer/unfrozen/cgroup.procs";
+    const char* CheckcgroupV1frozenPath = "/dev/freezer/frozen/cgroup.procs";
     // 如果直接使用 uid_xxx/cgroup.freeze 可能导致无法解冻
     const char* cgroupV2UidPidPath = "/sys/fs/cgroup/uid_%d/pid_%d/cgroup.freeze"; // "1"frozen   "0"unfrozen
     const char* cgroupV2FrozenPath = "/sys/fs/cgroup/frozen/cgroup.procs";         // write pid
@@ -86,6 +87,7 @@ public:
 
         threads.emplace_back(thread(&Freezer::cpuSetTriggerTask, this)); //监控前台
         threads.emplace_back(thread(&Freezer::cycleThreadFunc, this));
+        //threads.emplace_back(thread(&Freezer::eventTouchTriggerTask, this)); // 触摸事件
         if (settings.enableReKernel){
             threads.emplace_back(thread(&Freezer::binderEventTriggerTask, this)); //binder事件
         }
@@ -113,14 +115,16 @@ public:
         } break;
         
         case WORK_MODE::V1FROZEN: {
+            UmountV1Official();
+            mountFreezerV1();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if (checkFreezerV1Frozen()) {
                 workMode = WORK_MODE::V1FROZEN;
                 freezeit.log("Freezer类型已设为 V1(FROZEN)");
                 return;
             }
             freezeit.log("不支持自定义Freezer类型 V1(FROZEN)");
-            mountFreezerV1();
-        } return;
+        } break;
 
         case WORK_MODE::GLOBAL_SIGSTOP: {
             workMode = WORK_MODE::GLOBAL_SIGSTOP;
@@ -165,20 +169,15 @@ public:
 
         DIR* dir = opendir("/proc");
         if (dir == nullptr) {
-            char errTips[256];
-            snprintf(errTips, sizeof(errTips), "错误: %s() [%d]:[%s]", __FUNCTION__, errno,
-                strerror(errno));
-            fprintf(stderr, "%s", errTips);
-            freezeit.log(errTips);
+            fprintf(stderr, "错误: %s() [%d]:[%s]\n", __FUNCTION__, errno, strerror(errno));
+            freezeit.log("无法打开 /proc 目录");
             return;
         }
 
         struct dirent* file;
         while ((file = readdir(dir)) != nullptr) {
-            if (file->d_type != DT_DIR) continue;
-            if (file->d_name[0] < '0' || file->d_name[0] > '9') continue;
-
-            const int pid = atoi(file->d_name);
+            if (file->d_type != DT_DIR || file->d_name[0] < '0' || file->d_name[0] > '9') continue;
+            int pid = atoi(file->d_name);
             if (pid <= 100) continue;
 
             char fullPath[64];
@@ -200,7 +199,6 @@ public:
         closedir(dir);
         END_TIME_COUNT;
     }
-
     //临时解冻
     void unFreezerTemporary(set<int>& uids) {
         curForegroundApp.insert(uids.begin(), uids.end());
@@ -380,9 +378,10 @@ public:
     else {
         eraseInvalidPids(appInfo);
     }
-        if (settings.enableMemoryCompress) {
-            memory_compress(appInfo);
-        }
+    if (settings.enableMemoryCompress) {
+        memory_compress(appInfo);
+    }
+
     switch (appInfo.freezeMode) {
         case FREEZE_MODE::FREEZER:
         case FREEZE_MODE::FREEZER_BREAK:
@@ -646,8 +645,22 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
     bool checkFreezerV2FROZEN() {
         return (!access(cgroupV2frozenCheckPath, F_OK) && !access(cgroupV2unfrozenCheckPath, F_OK));
     }
+    bool CheckOfficialFreezerV1(){
+        return (!access(CheckcgroupV1UnfrozenPath, F_OK));
+    }
     bool checkReKernel(){
         return (!access(ReKernel_Path, F_OK));
+    }
+    void UmountV1Official(){   
+        if (CheckOfficialFreezerV1()){
+        /* 
+        * 这里不卸载官方FreezerV1的话 到后面两个墓碑一起冻结就GG了
+        */
+            freezeit.log("检测到冲突:/dev/freezer 即将卸载/dev/freezer");
+            Utils::RemoveFile(CheckcgroupV1UnfrozenPath);
+            Utils::RemoveFile(CheckcgroupV1frozenPath);
+            umount("/dev/freezer");
+        }
     }
     void MountV2Frozen(){
         mkdir("/sys/fs/cgroup/frozen/", 0666);
@@ -829,17 +842,20 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
     void updateAppProcess() {
         bool isupdate = false;
         vector<int> newShowOnApp, toBackgroundApp;
+        std::unordered_set<int> currentForegroundApp(curForegroundApp.begin(), curForegroundApp.end());
+        std::unordered_set<int> lastForegroundAppSet(lastForegroundApp.begin(), lastForegroundApp.end());
 
-        for (const int uid : curForegroundApp)
-            if (!lastForegroundApp.contains(uid))
-                newShowOnApp.emplace_back(uid);
-
-        for (const int uid : lastForegroundApp)
-            if (!curForegroundApp.contains(uid))
-                toBackgroundApp.emplace_back(uid);
-
+        for (const int uid : currentForegroundApp) 
+            if (!lastForegroundAppSet.count(uid)) 
+                newShowOnApp.push_back(uid);
+        
+       for (const int uid : lastForegroundAppSet) 
+            if (!currentForegroundApp.count(uid)) 
+                toBackgroundApp.push_back(uid);
+    
         if (newShowOnApp.empty() && toBackgroundApp.empty()) return;
-            lastForegroundApp = curForegroundApp;
+
+        lastForegroundApp = std::set<int>(std::make_move_iterator(currentForegroundApp.begin()), std::make_move_iterator(currentForegroundApp.end()));
 
         for (const int uid : newShowOnApp) {
             // 如果在待冻结列表则只需移除
@@ -1083,7 +1099,7 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
         END_TIME_COUNT;
     }
 
-
+   
     string getModeText(FREEZE_MODE mode) {
         switch (mode) {
         case FREEZE_MODE::TERMINATE:
@@ -1105,38 +1121,58 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
         }
     }
 
-    void eventTouchTriggerTask(int n) {
-        constexpr int TRIGGER_BUF_SIZE = 8192;
-
-        char touchEventPath[64];
-        snprintf(touchEventPath, sizeof(touchEventPath), "/dev/input/event%d", n);
-
-        usleep(n * 1000 * 10);
+    void eventTouchTriggerTask() {
+        
+        sleep(1);
 
         int inotifyFd = inotify_init();
         if (inotifyFd < 0) {
-            fprintf(stderr, "同步事件: 0xA%d (1/3)失败: [%d]:[%s]", n, errno, strerror(errno));
+            fprintf(stderr, "同步事件: 0xA (1/3)失败: [%d]:[%s]", errno, strerror(errno));
             exit(-1);
         }
-
-        int watch_d = inotify_add_watch(inotifyFd, touchEventPath, IN_ALL_EVENTS);
+        
+        std::string touchEventPath = Utils::GetTouchScreenDevice();
+        freezeit.log("已找到触摸设备: "+ touchEventPath);
+        int watch_d = inotify_add_watch(inotifyFd, touchEventPath.c_str(), IN_ALL_EVENTS);
         if (watch_d < 0) {
-            fprintf(stderr, "同步事件: 0xA%d (2/3)失败: [%d]:[%s]", n, errno, strerror(errno));
+            fprintf(stderr, "同步事件: 0xA (2/3)失败: [%d]:[%s]", errno, strerror(errno));
+            close(inotifyFd);
             exit(-1);
         }
 
-        freezeit.logFmt("初始化同步事件: 0xA%d", n);
+        freezeit.log("监听触摸事件成功");
 
-        constexpr int REMAIN_TIMES_MAX = 2;
-        char buf[TRIGGER_BUF_SIZE];
-        while (read(inotifyFd, buf, TRIGGER_BUF_SIZE) > 0) {
-             remainTimesToRefreshTopApp.store(REMAIN_TIMES_MAX, std::memory_order_relaxed);
+        const int buflen = sizeof(struct inotify_event) + NAME_MAX + 1;
+        char buf[buflen];
+        fd_set readfds;
+
+        while (true) {
+            FD_ZERO(&readfds);
+            FD_SET(inotifyFd, &readfds);
+
+            int iRet = select(inotifyFd + 1, &readfds, nullptr, nullptr, nullptr);
+            if (iRet < 0) {
+                break;
+            }
+
+            int len = read(inotifyFd, buf, buflen);
+            if (len < 0) {
+                fprintf(stderr, "同步事件: 0xB1 (3/3)失败: [%d]:[%s]", errno, strerror(errno));
+                break;
+            }
+
+            constexpr int REMAIN_TIMES_MAX = 2;
+            const struct inotify_event* event = reinterpret_cast<const struct inotify_event*>(buf);
+            if (event->mask & IN_ALL_EVENTS) {
+               remainTimesToRefreshTopApp.store(REMAIN_TIMES_MAX, std::memory_order_relaxed);
+               std::this_thread::sleep_for(std::chrono::milliseconds(70));
+            }
         }
 
         inotify_rm_watch(inotifyFd, watch_d);
         close(inotifyFd);
 
-        freezeit.logFmt("已退出监控同步事件: 0xA%d", n);
+        freezeit.log("已退出监听触摸事件");
     }
 
     void cpuSetTriggerTask() {
@@ -1148,7 +1184,6 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
             fprintf(stderr, "同步事件: 0xB1 (1/3)失败: [%d]:[%s]", errno, strerror(errno));
             exit(-1);
         }
-
 
         int wd = inotify_add_watch(fd, cpusetEventPath, IN_ALL_EVENTS);
         if (wd < 0) {
@@ -1181,7 +1216,7 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
             const struct inotify_event* event = reinterpret_cast<const struct inotify_event*>(buf);
             if (event->mask & IN_ALL_EVENTS) {
                remainTimesToRefreshTopApp.store(REMAIN_TIMES_MAX, std::memory_order_relaxed);
-               std::this_thread::sleep_for(std::chrono::milliseconds(90)); 
+               std::this_thread::sleep_for(std::chrono::milliseconds(70));
             }
         }
 
@@ -1190,36 +1225,33 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
 
         freezeit.log("已退出监听前台应用切换");
     }
-
+    
     // Binder事件 需要额外magisk模块: ReKernel
     void binderEventTriggerTask() {
-
-        if (checkReKernel()) {
-            freezeit.log("ReKernel已安装");
-        }else{
-            freezeit.log("ReKernel未安装");
-            return;
-        }
+        if (!checkReKernel()) freezeit.log("ReKernel未安装"); return;
+        
         int skfd;
         int ret;
-        int NetLink_UserSock = NETLINK_USERSOCK;
         user_msg_info u_info;
-        //socklen_t len;
+        socklen_t len;
+        struct nlmsghdr nlh;
         struct sockaddr_nl saddr, daddr;
-        char umsg[] = "Hello! Re:Kernel!"; 
+        std::string umsg = "Hello! Re:Kernel!";
 
         std::string ReKernel_path = Utils::getNumberedFiles(ReKernel_Path);
-        NetLink_UserSock = std::stoi(ReKernel_path);
-        #define NetLink_UserSock NetLink_UserSock
-        struct nlmsghdr* nlh = (struct nlmsghdr*)malloc(NLMSG_SPACE(MAX_PLOAD));
+        int NETLINK_UNIT = std::stoi(ReKernel_path);
+        #define NETLINK_SOCKET NETLINK_UNIT
+        while (true){
+            if (ReKernel_exception++ > 100) {
+                freezeit.log("ReKernel工作异常,已退出监听");
+                break;
+            }
 
-        while (true) {
-
-            skfd = socket(AF_NETLINK, SOCK_RAW, NetLink_UserSock);
+            skfd = socket(AF_NETLINK, SOCK_DGRAM, NETLINK_SOCKET);
             if (skfd == -1) {
                 freezeit.log("ReKernel AF_NETLINK 创建失败");
                 sleep(60);
-                continue;
+                return;
             }
 
             memset(&saddr, 0, sizeof(saddr));
@@ -1228,73 +1260,76 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
             saddr.nl_groups = 0;
             if (bind(skfd, (struct sockaddr *)&saddr, sizeof(saddr)) != 0){
                 close(skfd);
-
                 freezeit.log("ReKernel bind 失败");
-                sleep(60);
-                continue;
+                return;
             }
             memset(&daddr, 0, sizeof(daddr));
             daddr.nl_family = AF_NETLINK;
             daddr.nl_pid = 0;
             daddr.nl_groups = 0;
 
-            free(nlh);
-            nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PLOAD));
-            memset(nlh, 0, sizeof(struct nlmsghdr));
-            nlh->nlmsg_len = NLMSG_SPACE(MAX_PLOAD);
-            nlh->nlmsg_flags = 0;
-            nlh->nlmsg_type = 0;
-            nlh->nlmsg_seq = 0;
-            nlh->nlmsg_pid = saddr.nl_pid;
+            memset(&nlh, 0, sizeof(nlh));
+            nlh.nlmsg_len = NLMSG_SPACE(MAX_PLOAD);
+            nlh.nlmsg_flags = 0;
+            nlh.nlmsg_type = 0;
+            nlh.nlmsg_seq = 0;
+            nlh.nlmsg_pid = saddr.nl_pid;
 
-            memcpy(NLMSG_DATA(nlh), umsg, strlen(umsg));
-            ret = sendto(skfd, nlh, nlh->nlmsg_len, 0, (struct sockaddr*)&daddr, sizeof(struct sockaddr_nl));
-            if (ret < 0) {
+            memcpy(NLMSG_DATA(&nlh), umsg.c_str(), umsg.size());
+
+            ret = sendto(skfd, &nlh, nlh.nlmsg_len, 0, (struct sockaddr *)&daddr, sizeof(struct sockaddr_nl));
+            if (!ret) {
                 close(skfd);
 
-                freezeit.log("ReKernel Failed send msg to kernel");
+                freezeit.log("无法连接到ReKernel服务器");
                 sleep(60);
                 continue;
+                ReKernel_exception++;
             }
+            freezeit.log("已成功连接ReKernel服务器:" + ReKernel_path);
+
             while (true) {
-
                 memset(&u_info, 0, sizeof(u_info));
-                //len = sizeof(struct sockaddr_nl);
+                len = sizeof(struct sockaddr_nl);
 
-                char *ptr = strstr(u_info.msg, "target=");
+                ret = recvfrom(skfd, &u_info, sizeof(user_msg_info), 0, (struct sockaddr *)&daddr, &len);
+                if (!ret) {
+                    freezeit.log("从ReKernel接收消息失败！\n");
+                    break;
+                    ReKernel_exception++;
+                }
+
+                auto ptr = strstr(u_info.msg, "target=");
                 if (ptr != nullptr) {
                     const int uid = atoi(ptr + 7);
-                    //待冻结列队 前台应用 白名单 黑名单跳过临时解冻
-                    if (managedApp.contains(uid) && (!curForegroundApp.contains(uid))
-                     && (!pendingHandleList.contains(uid))
-                     && (!managedApp[uid].isBlacklist())) {
-                        continue;
-                       freezeit.logFmt("😋 ReKernel:临时解冻 %s", managedApp[uid].label.c_str());
-                       unFreezerTemporary(uid);       
-                    }         
+                    if (managedApp.contains(uid) && managedApp[uid].isSignalOrFreezer()
+                        && (!curForegroundApp.contains(uid))
+                        && (!pendingHandleList.contains(uid))) {
+                        unFreezerTemporary(uid);
+                        freezeit.logFmt("Binder解冻 %s", managedApp[uid].label.c_str());
+                    }
                 }
             }
-
-                close(skfd);
-                sleep(10);
+            close(skfd);
+            sleep(60);
         }
-
-                free(nlh);
     }
-
 
     void cycleThreadFunc() {
         uint32_t halfSecondCnt{ 0 };
 
         sleep(1);
         getVisibleAppByShell(); // 获取桌面
-        if (settings.enableBootFreezer) checkReFreezeBackup(); // 开机冻结
+        if (settings.enableBootFreezer) {
+            checkReFreezeBackup(); // 开机冻结
+        }
         
         while (true) {
             /*
             * 这里没必要休眠太久 重构后的cpuSetTriggerTask会自动堵塞
+            * 这里休眠90ms是因为如果一直if判断 CPU直接炸肛了
             */
-           std::this_thread::sleep_for(std::chrono::milliseconds(90));
+           std::this_thread::sleep_for(std::chrono::milliseconds(70));
            if (remainTimesToRefreshTopApp > 0) {
                 remainTimesToRefreshTopApp.fetch_sub(1);
                 START_TIME_COUNT;
@@ -1331,8 +1366,6 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
             checkWakeup();// 检查是否有定时解冻
         }
     }
-
-
     void getBlackListUidRunning(set<int>& uids) {
         uids.clear();
 

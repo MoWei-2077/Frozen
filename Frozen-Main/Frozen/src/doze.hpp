@@ -179,7 +179,16 @@ public:
         }
 
         isScreenOffStandby = false;
-
+        
+        if (settings.enablePowersaveMode) {
+            freezeit.log("🤪 已关闭Standby模式");
+            system(
+                "settings put global app_auto_restriction_enabled false"
+                "settings put global forced_app_standby_enabled 0"
+                "settings put global app_standby_enabled 0"
+                "settings put global forced_app_standby_for_small_battery_enabled 0"
+            );
+        }
         if (settings.enableDoze) {
             system("dumpsys deviceidle unforce");
 
@@ -275,7 +284,15 @@ public:
         }
 
         isScreenOffStandby = true;
-
+        if (settings.enablePowersaveMode){
+            freezeit.log("🥱 已开启Standby模式");
+            system(
+                "settings put global app_auto_restriction_enabled true"
+                "settings put global forced_app_standby_enabled 1"
+                "settings put global app_standby_enabled 1"
+                "settings put global forced_app_standby_for_small_battery_enabled 1"
+            );
+        }
         if (settings.enableDoze) {
             freezeit.debug("开始准备深度Doze");
             updateDozeWhitelist();

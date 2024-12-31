@@ -33,8 +33,8 @@ private:
             0,  //[18] ReKernel
             0,  //[19] 内存压缩
             0,  //[20] 开机冻结
-            0,  //[21]
-            0,  //[22]
+            0,  //[21] 网络解冻
+            0,  //[22] 省电模式 
             0,  //[13]
             0,  //[24]
             0,  //[25]
@@ -76,6 +76,8 @@ public:
     uint8_t& enableReKernel = settingsVar[18]; // ReKernel
     uint8_t& enableMemoryCompress = settingsVar[19]; // 内存压缩
     uint8_t& enableBootFreezer = settingsVar[20]; // 开机冻结
+    uint8_t& enableNetworkUnfreezer = settingsVar[21]; // 网络解冻
+    uint8_t& enablePowersaveMode = settingsVar[22]; // 省电模式
     //uint8_t& unknown = settingsVar[18];                // 
 
     uint8_t& enableDebug = settingsVar[30];        // 调试日志
@@ -234,8 +236,8 @@ public:
         case 18: // ReKernel
         case 19: // 内存压缩
         case 20: // 开机冻结
-        case 21: //
-        case 22: //
+        case 21: // 网络解冻
+        case 22: // 省电模式 
         case 23: //
         case 24: //
         case 25: //

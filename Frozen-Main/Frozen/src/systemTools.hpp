@@ -55,7 +55,7 @@ public:
     char cpuTempPath[256] = "/sys/class/thermal/thermal_zone0/temp";
 
     bool isAudioPlaying = false;
-    // bool isMicrophoneRecording = false;
+    bool isMicrophoneRecording = false;
 
     uint32_t extMemorySize = 0; // MiB
 
@@ -215,7 +215,12 @@ public:
         //  8192:0,12288:100,16384:200,32768:250,65536:900,96000:950
         //  4096:0,5120:100,8192:200,32768:250,65536:900,96000:950
         const char* lmkdParameter[] = {
+                "ro.config.low_ram", "false",
                 "ro.lmk.low", "1001",
+                "ro.lmk.downgrade_pressure", "100",
+                "ro.lmk.critical_upgrade", "false",
+                "ro.lmk.debug", "false",
+                "ro.lmk.kill_heaviest_task", "false",
                 "ro.lmk.medium", "1001",
                 "ro.lmk.critical", "100",
                 "ro.lmk.use_minfree_levels", "true",
@@ -223,6 +228,7 @@ public:
                 "ro.lmk.swap_free_low_percentage", "10",
                 "sys.lmk.minfree_levels",
                 "8192:0,12288:100,16384:200,32768:250,55296:900,80640:950",
+
         };
         // const char* adj = "0,100,200,250,900,950"; //另有 0,1,2,4,9,12
         const char minfree[] = "8192,12288,16384,32768,55296,80640";
@@ -246,6 +252,20 @@ public:
             system(cmd.c_str());
             freezeit.log("更新参数 LMK");
         }
+        else if (freezeit.moduleEnv == "Apath") {
+            if (!access("/data/adb/ap/bin/resetprop", F_OK)) {
+               string cmd;
+               for (int i = 0; i < len; i += 2){
+                        cmd += string("/data/adb/ap/bin/resetprop ") + lmkdParameter[i] + " " + lmkdParameter[i + 1] + ";";
+                    cmd += "sleep 1;lmkd --reinit";
+                    system(cmd.c_str());
+               }
+                    freezeit.log("更新参数 LMK");
+            }
+            else {
+                freezeit.log("未找到 Apath resetprop");
+            }
+        } 
         else if (freezeit.moduleEnv == "KernelSU") {
             if (!access("/data/adb/ksu/resetprop", F_OK)) {
                 string cmd;
