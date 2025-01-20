@@ -76,7 +76,9 @@ public:
         androidVerStr = to_string(ANDROID_VER) + " (API " + to_string(SDK_INT_VER) + ")";
 
         freezeit.logFmt("安卓版本 %s", androidVerStr.c_str());
-
+        if (settings.enableMemoryCompress) {
+            freezeit.log("已开启 [内存压缩]"); 
+        }
         utsname kernelInfo{};
         if (!uname(&kernelInfo)) {
             sscanf(kernelInfo.release, "%d.%d.%d", &kernelVersion.main, &kernelVersion.sub,

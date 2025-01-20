@@ -41,8 +41,7 @@ private:
     uint32_t unfrozenTimeline[4096] = {};
 
 
-    int refreezeSecRemain = 15; //开机压制
-    int Memory_CompressLog = 1; // 内存压缩日志次数 
+    int refreezeSecRemain = 10; //开机压制
     int ReKernel_exception; // ReKernel工作异常次数
     std::atomic<int> remainTimesToRefreshTopApp;  // 使用原子进行操作
 
@@ -54,12 +53,13 @@ private:
     const char* cgroupV2unfrozenCheckPath = "/sys/fs/cgroup/unfrozen/cgroup.freeze";   // "0" unfrozen
 
     const char* cpusetEventPath = "/dev/cpuset/top-app";
-
+    
     const char* cgroupV1FrozenPath = "/dev/jark_freezer/frozen/cgroup.procs";
     const char* cgroupV1UnfrozenPath = "/dev/jark_freezer/unfrozen/cgroup.procs";
     
     const char* CheckcgroupV1UnfrozenPath = "/dev/freezer/unfrozen/cgroup.procs";
     const char* CheckcgroupV1frozenPath = "/dev/freezer/frozen/cgroup.procs";
+    
     // 如果直接使用 uid_xxx/cgroup.freeze 可能导致无法解冻
     const char* cgroupV2UidPidPath = "/sys/fs/cgroup/uid_%d/pid_%d/cgroup.freeze"; // "1"frozen   "0"unfrozen
     const char* cgroupV2FrozenPath = "/sys/fs/cgroup/frozen/cgroup.procs";         // write pid
@@ -115,8 +115,8 @@ public:
         } break;
         
         case WORK_MODE::V1FROZEN: {
-            UmountV1Official();
             mountFreezerV1();
+            UmountV1Official();
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if (checkFreezerV1Frozen()) {
                 workMode = WORK_MODE::V1FROZEN;
@@ -298,10 +298,6 @@ public:
         return uids;
     }
     void memory_compress(const appInfoStruct& appInfo){
-        if (Memory_CompressLog == 1) {
-            freezeit.log("已开启 [内存压缩]"); 
-            Memory_CompressLog = 0; // 不再输出日志
-        } 
      // https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/services/core/jni/com_android_server_am_CachedAppOptimizer.cpp;bpv=1;bpt=1;l=274?q=compactProcess&ss=android%2Fplatform%2Fsuperproject%2Fmain&hl=zh-cn
             const char* action = "内存压缩";
             const char* compactionType = "file";
@@ -1009,73 +1005,54 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
         const char* cmdList[] = { "/system/bin/cmd", "cmd", "activity", "stack", "list", nullptr };
         VPOPEN::vpopen(cmdList[0], cmdList + 1, getVisibleAppBuff.get(), GET_VISIBLE_BUF_SIZE);
 
-        stringstream ss;
-        ss << getVisibleAppBuff.get();
-
-        // 以下耗时仅为 VPOPEN::vpopen 的 2% ~ 6%
+    // 以下耗时仅为 VPOPEN::vpopen 的 2% ~ 6%
         string line;
-        while (getline(ss, line)) {
-            if (!managedApp.hasHomePackage() && line.find("mActivityType=home") != string::npos) {
-                getline(ss, line); //下一行就是桌面信息
+        {
+            stringstream ss(getVisibleAppBuff.get());
+            while (getline(ss, line)) {
+                if (!managedApp.hasHomePackage() && line.find("mActivityType=home") != string::npos) {
+                    getline(ss, line); // 下一行就是桌面信息
+                    auto startIdx = line.find_last_of('{');
+                    auto endIdx = line.find_last_of('/');
+                    if (startIdx != string::npos && endIdx != string::npos && startIdx < endIdx) {
+                        managedApp.updateHomePackage(line.substr(startIdx + 1, endIdx - (startIdx + 1)));
+                    }
+                }
+
+                if (!line.starts_with("  taskId=")) continue;
+                if (line.find("visible=true") == string::npos) continue;
+
                 auto startIdx = line.find_last_of('{');
                 auto endIdx = line.find_last_of('/');
-                if (startIdx == string::npos || endIdx == string::npos || startIdx > endIdx)
-                    continue;
+                if (startIdx == string::npos || endIdx == string::npos || startIdx > endIdx) continue;
 
-                managedApp.updateHomePackage(line.substr(startIdx + 1, endIdx - (startIdx + 1)));
+                const string package = line.substr(startIdx + 1, endIdx - (startIdx + 1));
+                if (!managedApp.contains(package)) continue;
+                int uid = managedApp.getUid(package);
+                if (managedApp[uid].isWhitelist()) continue;
+                curForegroundApp.insert(uid);
             }
-
-            //  taskId=8655: com.ruanmei.ithome/com.ruanmei.ithome.ui.MainActivity bounds=[0,1641][1440,3200]
-            //     userId=0 visible=true topActivity=ComponentInfo{com.ruanmei.ithome/com.ruanmei.ithome.ui.NewsInfoActivity}
-            if (!line.starts_with("  taskId=")) continue;
-            if (line.find("visible=true") == string::npos) continue;
-
-            auto startIdx = line.find_last_of('{');
-            auto endIdx = line.find_last_of('/');
-            if (startIdx == string::npos || endIdx == string::npos || startIdx > endIdx) continue;
-
-            const string& package = line.substr(startIdx + 1, endIdx - (startIdx + 1));
-            if (!managedApp.contains(package)) continue;
-            int uid = managedApp.getUid(package);
-            if (managedApp[uid].isWhitelist()) continue;
-            curForegroundApp.insert(uid);
         }
 
-        if (curForegroundApp.size() >= (lastForegroundApp.size() + 3)) //有时系统会虚报大量前台应用
+        if (curForegroundApp.size() >= (lastForegroundApp.size() + 3)) { // 有时系统会虚报大量前台应用
             curForegroundApp = lastForegroundApp;
+        }
 
         END_TIME_COUNT;
     }
-    /*
-    void get_Millet_Binder_LocalSocket(){
-        
-        int buff[64];
-        int recvLen = Utils::localSocketRequest(XPOSED_CMD::GET_MILLET_BINDER, nullptr, 0, buff,
-            sizeof(buff));
 
-        int& UidLen = buff[0];
-        if (recvLen <= 0) {
-            freezeit.logFmt("%s() 工作异常, 请确认LSPosed中冻它勾选系统框架, 然后重启", __FUNCTION__);
-            return;
-        }
-    }
-    */
     void getVisibleAppByLocalSocket() {
         START_TIME_COUNT;
 
         int buff[64];
-        int recvLen = Utils::localSocketRequest(XPOSED_CMD::GET_FOREGROUND, nullptr, 0, buff,
-            sizeof(buff));
+        int recvLen = Utils::localSocketRequest(XPOSED_CMD::GET_FOREGROUND, nullptr, 0, buff, sizeof(buff));
 
         int& UidLen = buff[0];
-        if (recvLen <= 0) {
-            freezeit.logFmt("%s() 工作异常, 请确认LSPosed中冻它勾选系统框架, 然后重启", __FUNCTION__);
-            END_TIME_COUNT;
-            return;
-        }
-        else if (UidLen > 16 || (UidLen != (recvLen / 4 - 1))) {
-            freezeit.logFmt("%s() 前台服务数据异常 UidLen[%d] recvLen[%d]", __FUNCTION__, UidLen, recvLen);
+        if (recvLen <= 0 || UidLen > 16 || UidLen != (recvLen / 4 - 1)) {
+            freezeit.logFmt(recvLen <= 0 ? "%s() 工作异常, 请确认LSPosed中冻它勾选系统框架, 然后重启" : "%s() 前台服务数据异常 UidLen[%d] recvLen[%d]", __FUNCTION__);
+        if (recvLen > 0) {
             freezeit.logFmt("DumpHex: %s", Utils::bin2Hex(buff, recvLen < 64 * 4 ? recvLen : 64 * 4).c_str());
+        }
             END_TIME_COUNT;
             return;
         }
@@ -1087,16 +1064,20 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
             else freezeit.logFmt("非法UID[%d], 可能是新安装的应用, 请点击右上角第一个按钮更新应用列表", uid);
         }
 
-#if DEBUG_DURATION
-        string tmp;
-        for (auto& uid : curForegroundApp)
-            tmp += " [" + managedApp[uid].label + "]";
-        if (tmp.length())
+    #if DEBUG_DURATION
+        std::string tmp;
+        for (auto& uid : curForegroundApp) {
+            if (!tmp.empty()) tmp += ", ";
+            tmp += managedApp[uid].label;
+        }
+        if (!tmp.empty()) {
             freezeit.logFmt("LOCALSOCKET前台%s", tmp.c_str());
-        else
+        } else {
             freezeit.log("LOCALSOCKET前台 空");
-#endif
-        END_TIME_COUNT;
+        }
+    #endif
+
+    END_TIME_COUNT; 
     }
 
    
@@ -1113,7 +1094,7 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
         case FREEZE_MODE::FREEZER_BREAK:
             return "Freezer冻结断网";
         case FREEZE_MODE::WHITELIST:
-            return "自由后台";
+            return "白名单";
         case FREEZE_MODE::WHITEFORCE:
             return "自由后台(内置)";
         default:
@@ -1177,13 +1158,14 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
 
     void cpuSetTriggerTask() {
 
-         sleep(1);
+        sleep(1);
 
         int fd = inotify_init();
         if (fd < 0)  {
             fprintf(stderr, "同步事件: 0xB1 (1/3)失败: [%d]:[%s]", errno, strerror(errno));
             exit(-1);
         }
+
 
         int wd = inotify_add_watch(fd, cpusetEventPath, IN_ALL_EVENTS);
         if (wd < 0) {
@@ -1216,7 +1198,7 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
             const struct inotify_event* event = reinterpret_cast<const struct inotify_event*>(buf);
             if (event->mask & IN_ALL_EVENTS) {
                remainTimesToRefreshTopApp.store(REMAIN_TIMES_MAX, std::memory_order_relaxed);
-               std::this_thread::sleep_for(std::chrono::milliseconds(70));
+               std::this_thread::sleep_for(std::chrono::milliseconds(70)); 
             }
         }
 
@@ -1355,7 +1337,7 @@ void handleNetworkBreak(appInfoStruct& appInfo) {
 
             // 2分钟一次 在亮屏状态检测是否已经息屏  息屏状态则检测是否再次强制进入深度Doze
             if (doze.checkIfNeedToEnter()) {
-                curFgBackup = std::move(curForegroundApp); //backup
+                curFgBackup = std::move(curForegroundApp); // backup
                 updateAppProcess();
             }
 
