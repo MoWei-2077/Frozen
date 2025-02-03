@@ -1,4 +1,16 @@
-// Freezeit 冻它模块  By JARK006
+/* Freezeit: 冻它模块
+ * Copyright (c) 2023 JARK006
+ * 
+ * 命令行编译：
+ * clang++.exe --target=aarch64-none-linux-android29 --sysroot=D:/AndroidSDK/ndk/25.2.9519653/toolchains/llvm/prebuilt/windows-x86_64/sysroot -std=c++20 -static -s -Ofast -Wall -Wextra -Wshadow -fno-exceptions -fno-rtti -DNDEBUG -fPIE -Iinclude src/main.cpp -o build/freezeit
+ * 
+ * 主线程8MiB  子线程 栈深约 1016Kib
+ * 
+ * 在左下角 Build Variants 选择 Release
+ * 在任意 cpp头文件或源码文件中，菜单 Build -> Recompile "xxx"
+ * 编译输出 module\\build\intermediates\cmake\release\obj\arm64-v8a
+ * 
+ */
 
 #include "freezeit.hpp"
 #include "settings.hpp"
@@ -9,16 +21,16 @@
 #include "server.hpp"
 
 int main(int argc, char **argv) {
-    //先获取模块当前目录，Init()开启守护线程后, 工作目录将切换到根目录 "/"
-    char fullPath[1024] = {};
-    auto pathPtr = realpath(argv[0], fullPath); 
+
+    char tmp[1024];
+    string fullPath(realpath(argv[0], tmp));
 
     Utils::Init();
 
-    Freezeit freezeit(argc, string(pathPtr));
+    Freezeit freezeit(argc,  std::move(fullPath));
     Settings settings(freezeit);
-    SystemTools systemTools(freezeit, settings);
     ManagedApp managedApp(freezeit, settings);
+    SystemTools systemTools(freezeit, settings);
     Doze doze(freezeit, settings, managedApp, systemTools);
     Freezer freezer(freezeit, settings, managedApp, systemTools, doze);
     Server server(freezeit, settings, managedApp, systemTools, doze, freezer);
@@ -27,15 +39,4 @@ int main(int argc, char **argv) {
     return 0;
 }
 
-/*
-TODO
-
-1. 识别状态栏播放控件为前台 参考开源APP listen1 lxmusic
-2. 进程冻结状态整合
-3. 一些应用解冻后无法进入下一个activity
-4. QQ解冻无网络
-
-5. 抖音短时间解冻后重载：上次正在看的视频没了
-6. 偶尔亮屏后，系统手势(返回，主页，最近任务)控制失灵，约3-5秒后恢复
-*/
 
