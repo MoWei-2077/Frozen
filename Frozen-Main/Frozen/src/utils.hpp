@@ -120,7 +120,6 @@ enum class FREEZE_MODE : uint32_t {
     SIGNAL_BREAK = 21,
     FREEZER = 30,
     FREEZER_BREAK = 31,
-    BINDER_FREEZE = 32,
     WHITELIST = 40,
     WHITEFORCE = 50,
 };

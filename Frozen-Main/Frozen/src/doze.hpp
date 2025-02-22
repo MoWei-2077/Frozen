@@ -69,7 +69,7 @@ private:
             sizeof(buff));
 
         if (recvLen == 0) {
-            freezeit.logFmt("%s() 工作异常, 请确认LSPosed中冻它勾选系统框架, 然后重启", __FUNCTION__);
+            freezeit.logFmt("%s() 工作异常, 请确认LSPosed中Frozen是否已经勾选系统框架", __FUNCTION__);
             END_TIME_COUNT;
             return 0;
         }
@@ -182,14 +182,15 @@ public:
         
         if (settings.enableDoze) {
             system("dumpsys deviceidle unforce");
+
         if (settings.enableStandbyApp) {
-            system(
-                "dumpsys deviceidle unforce"
-                "settings put global app_auto_restriction_enabled false"
-                "settings put global forced_app_standby_enabled 0"
-                "settings put global app_standby_enabled 0"
-                "settings put global forced_app_standby_for_small_battery_enabled 0"
-            );
+            freezeit.debug("🤪 已关闭Standby模式");
+                system(
+                    "settings put global app_auto_restriction_enabled false"
+                    "settings put global forced_app_standby_enabled 0"
+                    "settings put global app_standby_enabled 0"
+                    "settings put global forced_app_standby_for_small_battery_enabled 0"
+                );
         }
             int deltaTime = time(nullptr) - enterDozeTimeStamp;
             const int activeRate = deltaTime <= 0 ? 0 :
@@ -207,7 +208,7 @@ public:
                 if (activeRate <= 85)
                     tmp.append("🤪 退出深度Doze 时长 ");
                 else
-                    tmp.append("🤪 这段时间未能进入深度Doze, 请检查应用的唤醒锁使用情况 时长 ");
+                    tmp.append("🤪 这段时间未能进入深度Doze, 请使用'EX Kernel Manager' 'Thanox'检查应用的唤醒锁使用情况 时长 ");
 
                 if (deltaTime >= 3600) {
                     tmp.appendFmt("%d时", deltaTime / 3600);
@@ -233,12 +234,12 @@ public:
                     uidTimeSort.emplace_back(st{ uid, delta });
                 }
 
-                sort(uidTimeSort.begin(), uidTimeSort.end(),
+                std::sort(uidTimeSort.begin(), uidTimeSort.end(),
                     [](const st& a, const st& b) { return a.delta > b.delta; });
 
                 tmp.clear();
                 for (auto& [uid, delta] : uidTimeSort) {
-                    tmp.append("[", 1);
+                    tmp.append('[');
                     const int minutesMilliSec = 60 * 1000;
                     if (delta >= minutesMilliSec) {
                         tmp.appendFmt("%d分", delta / minutesMilliSec);
@@ -295,16 +296,17 @@ public:
 
             system(
                 "dumpsys deviceidle enable all;"
-                "dumpsys deviceidle force-idle deep;"
+                "dumpsys deviceidle force-idle deep"
             );
             if (settings.enableStandbyApp) {
+                freezeit.debug("🥱 已开启Standby模式");
                 system(
                     "settings put global app_auto_restriction_enabled true"
                     "settings put global forced_app_standby_enabled 1"
                     "settings put global app_standby_enabled 1"
                     "settings put global forced_app_standby_for_small_battery_enabled 1"
                 );
-            }
+            }       
         }
         return true;
     }

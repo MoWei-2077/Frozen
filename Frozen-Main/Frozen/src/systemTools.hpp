@@ -717,7 +717,7 @@ public:
             sizeof(buff));
 
         if (recvLen == 0) {
-            freezeit.logFmt("%s() 工作异常, 请确认LSPosed中冻它勾选系统框架, 然后重启", __FUNCTION__);
+            freezeit.logFmt("%s() 工作异常, 请确认LSPosed中Frozen是否已经勾选系统框架", __FUNCTION__);
             END_TIME_COUNT;
             return 0;
         }
@@ -793,7 +793,7 @@ public:
                 }
             }
             isAudioPlaying = playbackDevicesCnt > 0;
-            usleep(500 * 1000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
 
         inotify_rm_watch(inotifyFd, watch_d);

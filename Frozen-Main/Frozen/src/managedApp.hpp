@@ -427,7 +427,6 @@ public:
             FREEZE_MODE::SIGNAL_BREAK,
             FREEZE_MODE::FREEZER,
             FREEZE_MODE::FREEZER_BREAK,
-            FREEZE_MODE::BINDER_FREEZE,
             FREEZE_MODE::WHITELIST,
             FREEZE_MODE::WHITEFORCE,
     };
@@ -835,7 +834,7 @@ public:
                 return;
             }
         }
-        freezeit.logFmt("%s() 工作异常, 请确认LSPosed中冻它勾选系统框架, 然后重启 sendLen[%lu]", __FUNCTION__,
+        freezeit.logFmt("%s() 工作异常, 请确认LSPosed中Frozen是否已经勾选系统框架 sendLen[%lu]", __FUNCTION__,
             tmp.length());
     }
 

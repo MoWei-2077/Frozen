@@ -194,10 +194,6 @@ public:
                 systemTools.androidVerStr.c_str(), systemTools.kernelVerStr.c_str(), systemTools.extMemorySize);
         } break;
 
-        case MANAGER_CMD::getChangelog: {
-            replyPtr = freezeit.getChangelogPtr();
-            replyLen = freezeit.getChangelogLen();
-        } break;
 
         case MANAGER_CMD::getLog: {
             replyPtr = freezeit.getLogPtr();
@@ -274,8 +270,8 @@ public:
         case MANAGER_CMD::getXpLog: {
             const int len = Utils::localSocketRequest(XPOSED_CMD::GET_XP_LOG, nullptr, 0, (int*)replyBuf.get(), REPLY_BUF_SIZE);
             if (len == 0) {
-                freezeit.log("getXpLog 工作异常, 请确认LSPosed中冻它勾选系统框架, 然后重启");
-                replyPtr = "Freezeit's Xposed log is empty. ";
+                freezeit.log("getXpLog 工作异常, 请确认LSPosed中Frozen是否已经勾选系统框架");
+                replyPtr = "Frozen's Xposed log is empty. ";
                 replyLen = 32;
             }
             else {
@@ -341,7 +337,7 @@ public:
                 }
             }
             if (tips.length())
-                freezeit.logFmt("以下UID的应用不受冻它管理：[%s] 可在冻它配置页搜索UID查看是哪些应用", tips.c_str());
+                freezeit.logFmt("以下UID的应用不受Frozen管理：[%s] 可在Frozen配置页搜索UID查看是哪些应用", tips.c_str());
 
             //auto runningPids = freezer.getRunningPids(changeUidSet);
             //tips.clear();

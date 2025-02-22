@@ -5,7 +5,7 @@
 
 class Freezeit {
 private:
-    const char* LOG_PATH = "/sdcard/Android/freezeit.log";
+    const char* LOG_PATH = "/sdcard/Android/Frozen.log";
 
     constexpr static int LINE_SIZE = 1024 * 32;   //  32 KiB
     constexpr static int BUFF_SIZE = 1024 * 128;  // 128 KiB
@@ -17,7 +17,6 @@ private:
     char logCache[BUFF_SIZE];
 
     string propPath;
-    string changelog{ "无" };
 
     uint8_t* deBugFlagPtr = nullptr;
 
@@ -144,7 +143,7 @@ public:
         toFileFlag = argc > 1;
         if (toFileFlag) {
             if (position)toFile(logCache, position);
-            const char tips[] = "日志已通过文件输出: /sdcard/Android/freezeit.log";
+            const char tips[] = "日志已通过文件输出: /sdcard/Android/Frozen.log";
             toMem(tips, sizeof(tips) - 1);
         }
 
@@ -174,8 +173,6 @@ public:
         }
         fclose(fp);
 
-
-        changelog = Utils::readString((modulePath + "/changelog.txt").c_str());
 
 
         logFmt("模块版本 %s(%s)", prop["version"].c_str(), prop["versionCode"].c_str());
@@ -216,10 +213,6 @@ public:
 
         return *deBugFlagPtr;
     }
-
-    char* getChangelogPtr() { return (char*)changelog.c_str(); }
-
-    size_t getChangelogLen() { return changelog.length(); }
 
     bool saveProp() {
         auto fp = fopen(propPath.c_str(), "wb");

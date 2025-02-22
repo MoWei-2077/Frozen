@@ -35,9 +35,9 @@ private:
             0,  //[20] ReKernel临时解冻
             0,  //[21] 开机冻结
             0,  //[22] 休眠应用
-            1,  //[23] 多线程解冻
+            0,  //[23] 多线程解冻
             0,  //[24] 全局断网
-            0,  //[25]
+            0,  //[25] 不冻结息屏后仍存在于前台的应用
             0,  //[26]
             0,  //[27]
             0,  //[28]
@@ -81,6 +81,7 @@ public:
     uint8_t& enableStandbyApp = settingsVar[22];     // 休眠应用
     uint8_t& enableUnFreezeThread = settingsVar[23]; // 多线程解冻
     uint8_t& enableBreakNetwork = settingsVar[24];   // 全局断网
+    uint8_t& enableIgnoreWakeupLock = settingsVar[25]; // 不冻结息屏后仍存在于前台的应用 
     uint8_t& enableDebug = settingsVar[30];        // 调试日志
     
     Settings& operator=(Settings&&) = delete;
@@ -264,7 +265,7 @@ public:
         case 22: // 休眠应用
         case 23: // 多线程解冻
         case 24: // 全局断网
-        case 25: //
+        case 25: // 不冻结息屏后仍存在于前台的应用
         case 26: //
         case 27: //
         case 28: //
