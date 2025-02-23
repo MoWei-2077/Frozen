@@ -184,7 +184,7 @@ public:
             system("dumpsys deviceidle unforce");
 
         if (settings.enableStandbyApp) {
-            freezeit.debug("🤪 已关闭Standby模式");
+            freezeit.log("🤪 已关闭Standby模式");
                 system(
                     "settings put global app_auto_restriction_enabled false"
                     "settings put global forced_app_standby_enabled 0"
@@ -286,7 +286,7 @@ public:
         isScreenOffStandby = true;
 
         if (settings.enableDoze) {
-            freezeit.debug("开始准备深度Doze");
+            freezeit.log("开始准备深度Doze");
             updateDozeWhitelist();
             updateUidTime();
 

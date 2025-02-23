@@ -81,7 +81,7 @@ public:
     uint8_t& enableStandbyApp = settingsVar[22];     // 休眠应用
     uint8_t& enableUnFreezeThread = settingsVar[23]; // 多线程解冻
     uint8_t& enableBreakNetwork = settingsVar[24];   // 全局断网
-    uint8_t& enableIgnoreWakeupLock = settingsVar[25]; // 不冻结息屏后仍存在于前台的应用 
+    uint8_t& enableMemoryManage = settingsVar[25]; // 内存管理 
     uint8_t& enableDebug = settingsVar[30];        // 调试日志
     
     Settings& operator=(Settings&&) = delete;
@@ -265,7 +265,7 @@ public:
         case 22: // 休眠应用
         case 23: // 多线程解冻
         case 24: // 全局断网
-        case 25: // 不冻结息屏后仍存在于前台的应用
+        case 25: // 内存管理
         case 26: //
         case 27: //
         case 28: //

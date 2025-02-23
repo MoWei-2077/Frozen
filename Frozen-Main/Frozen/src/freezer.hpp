@@ -376,7 +376,10 @@ public:
                 });
         }
         MemoryRecycle(appInfo);
-        
+        if (settings.enableMemoryManage) {
+            A1memory_main(appInfo);
+        }
+      
         switch (appInfo.freezeMode) {
         case FREEZE_MODE::FREEZER: 
         case FREEZE_MODE::FREEZER_BREAK: {
@@ -444,7 +447,16 @@ public:
         END_TIME_COUNT;
         return appInfo.pids.size();
     }
-
+    void A1memory_main(const appInfoStruct& appInfo) {
+        int memoryUsagePercentage = (systemTools.memInfo.totalRam ? static_cast<int>(round((systemTools.memInfo.totalRam - systemTools.memInfo.availRam) * 100.0 / systemTools.memInfo.totalRam)) : 0);
+        if (memoryUsagePercentage > settings.memoryRecycle && settings.enableMemoryManage){
+            for (const int pid : appInfo.pids) {
+                handleSignal(appInfo, SIGKILL);
+                freezeit.logFmt("杀死: %s PID:%d", appInfo.label.c_str(), pid);
+            }  
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }    
+    }  
     void MemoryRecycle(const appInfoStruct& appInfo) {
         if (!settings.enableMemoryRecycle) return;
         int memoryUsagePercentage = (systemTools.memInfo.totalRam ? 
@@ -1352,14 +1364,14 @@ public:
         
         while (true) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                if (!settings.enableUnFreezeThread && remainTimesToRefreshTopApp > 0) {
+                if (remainTimesToRefreshTopApp > 0) {
                     remainTimesToRefreshTopApp--;
                     START_TIME_COUNT;
                     if (doze.isScreenOffStandby && doze.checkIfNeedToExit()) {
                         curForegroundApp = std::move(curFgBackup); // recovery
                         updateAppProcess();
                     }
-                    else {
+                    else if (settings.enableUnFreezeThread){
                         getVisibleAppByLocalSocket();
                         updateAppProcess(); // ~40us
                     }
@@ -1370,7 +1382,6 @@ public:
                                             
             systemTools.cycleCnt++;
             
-
             processPendingApp();
             
             if (doze.checkIfNeedToEnter()) {
