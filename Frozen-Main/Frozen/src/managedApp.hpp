@@ -5,6 +5,7 @@
 #include "settings.hpp"
 #include "vpopen.hpp"
 
+
 class ManagedApp {
 private:
     string cfgPath;
@@ -12,6 +13,7 @@ private:
 
     Freezeit& freezeit;
     Settings& settings;
+
     static const size_t PACKAGE_LIST_BUF_SIZE = 256 * 1024;
     unique_ptr<char[]> packageListBuff;
 
@@ -27,46 +29,37 @@ private:
             "com.xiaomi.misettings",                // 设置
             "com.xiaomi.barrage",                   // 弹幕通知
             "com xiaomi.aireco",                    // 小爱建议
-            "io.github.MoWei.Frozen",               // Frozen
             "com.xiaomi.account",                   // 小米账号
             "com.miui.notes",                       // 笔记  冻结会导致系统侧边栏卡住
             "com.miui.mediaeditor",                 // 相册编辑
             "com.miui.personalassistant",           // 个人助理
             "com.miui.vipservice",                  // 我的服务
             "com.miui.systemAdSolution",            // 智能助理 广告相关 冻结会导致酷安等应用卡顿
-            "com.miui.home",
-            "com.miui.carlink",
-            "com.miui.packageinstaller",            // 安装包管理
-            "com.miui.accessibility",               // 小米无障碍
-            "com.miui.core",                        // MIUI SDK
-            "com.miui.privacycomputing",            // MIUI Privacy Components
-            "com.miui.securityadd",                 // 系统服务组件
-            "com.miui.securityinputmethod",         // 小米安全键盘
-            "com.miui.system",
-            "com.miui.vpnsdkmanager",               // MiuiVpnSdkManager
             "com.mfashiongallery.emag",             // 小米画报
             "com.huawei.hwid",                      // HMS core服务
 
             "cn.litiaotiao.app",                    // 李跳跳
             "com.litiaotiao.app",                   // 李跳跳
             "hello.litiaotiao.app",                 // 李跳跳
-            "com.zfdang.touchhelper",               // 跳广告
-            "com.giftedcat.adskiphelper",           // 跳广告
+            "com.topjohnwu.magisk",                 // Magisk
+            "io.github.vvb2060.magisk",             // Magisk Alpha
+            "io.github.huskydg.magisk",             // Magisk Delta
+            "io.github.MoWei.Frozen",               // Frozen
+            "io.github.jark006.weather",            // 小天气
+            "com.jark006.weather",                  // 小天气
+            "org.lsposed.manager",                  // LSPosed
+            "com.sevtinge.cemiuiler",               // 西米露
+            "com.github.tianma8023.xposed.smscode", // XposedSmsCode
             "com.merxury.blocker",                  // Blocker
             "com.wpengapp.lightstart",              // 轻启动
-            "li.songe.gkd",                         // GKD
-            "com.sevtinge.hyperceiler",             // HyperCeiler
-            "me.bmax.apatch",                       // Apatch
-            "com.topjohnwu.magisk",                 // Magisk
-            "org.lsposed.manager",                  // LSPosed
             "name.monwf.customiuizer",              // 米客 原版
             "name.mikanoshi.customiuizer",          // 米客
-            "com.android.vending",                  // Play 商店
 
             "org.meowcat.xposed.mipush",            // 小米推送框架增强
             "top.trumeet.mipush",                   // 小米推送服务
+            "com.meizu.cloud",                      // 魅族推送服务
+            "com.meizu.flyme.find",                  // 魅族查找手机服务
             "one.yufz.hmspush",                     // HMSPush服务
-            "io.github.MoWei.Frozen",               // Frozen
             "app.lawnchair",                        // Lawnchair
             "com.microsoft.launcher",               // 微软桌面
             "com.teslacoilsw.launcher",             // Nova Launcher
@@ -76,10 +69,16 @@ private:
             "com.gau.go.launcherex",                // GO桌面
             "bitpit.launcher",                      // Niagara Launcher
             "com.google.android.apps.nexuslauncher",// pixel 桌面
-            "com.oppo.launcher",
+            "com.oppo.launcher",                    // OPPO桌面
+
 
             "me.weishu.kernelsu",                   // KernelSU
+            "me.bmax.apatch",                       // Apatch
             "top.canyie.dreamland.manager",         // Dreamland
+
+            "com.miui.home",
+            "com.miui.carlink",
+            "com.miui.packageinstaller",            // 安装包管理
             "com.coloros.packageinstaller",         // 安装包管理
             "com.oplus.packageinstaller",           // 安装包管理
             "com.iqoo.packageinstaller",            // 安装包管理
@@ -114,7 +113,8 @@ private:
             "com.iflytek.inputmethod.blackshark",         //讯飞输入法blackshark版
             "com.iflytek.inputmethod.zte",                //讯飞输入法zte版
 
-            "com.tencent.qqpinyin",                       // QQ拼音输入法
+            "com.tencent.wetype",                          //微信输入法
+            "com.tencent.qqpinyin",                       //QQ拼音输入法
             "com.google.android.inputmethod.latin",       //谷歌Gboard输入法
             "com.touchtype.swiftkey",                     //微软swiftkey输入法
             "com.touchtype.swiftkey.beta",                //微软swiftkeyBeta输入法
@@ -131,64 +131,12 @@ private:
 
             "com.google.android.ext.services",
             "com.google.android.ext.shared",
-            "com.google.android.gms",               // GMS 服务
-            "com.google.android.gsf",               // Google 服务框架
 
-            "com.google.android.systemui.gxoverlay",    // SystemUIGX
-            "com.google.android.tag",    // Tags
-            "com.google.android.documentsui",    // 文件
-            "com.google.android.ext.shared",    // Android Shared Library
-            "com.google.android.captiveportallogin",    // 强制门户登录
-            "com.google.android.printservice.recommendation",    // Print Service Recommendation Service
-            "com.google.android.gms.supervision",    // Family Link 家长控制
-            "com.google.android.as.oss",    // Private Compute Services
-            "com.google.android.configupdater",    // ConfigUpdater
-            "com.google.android.apps.restore",    // 数据恢复工具
-            "com.google.android.onetimeinitializer",    // Google One Time Init
-            "com.google.android.odad",    // Google Play 保护机制服务
-            "com.google.android.settings.intelligence",    // 设置小助手
-            "com.google.android.partnersetup",    // Google Partner Setup
-            "com.google.android.projection.gearhead",    // Android Auto
-            "com.google.android.apps.wellbeing",    // 数字健康
-            "com.google.android.as",    // Android System Intelligence
-            "com.google.android.dialer",    // 电话
-            "com.google.android.apps.messaging",    // 信息
-            "com.google.android.googlequicksearchbox",    // Google
-            "com.google.android.webview",    // Android System WebView
-            "com.google.android.tts",    // Google 语音服务
-            "com.google.android.deskclock",    // 时钟
-            "com.google.android.markup",    // Markup
-            "com.google.android.calendar",    // 日历
-            "com.google.android.soundpicker",    // 音效
-            "com.google.android.apps.wallpaper.nexus",    // Google Wallpaper Images
-            "com.google.android.modulemetadata",    // Main components
-            "com.google.android.contacts",    // 通讯录
-            "com.google.android.apps.customization.pixel",    // Pixel Themes
-            "com.google.android.apps.photos",    // 相册
-            "com.google.android.feedback",    // 应用商店反馈代理程序
-            "com.google.android.apps.wallpaper",    // 壁纸与个性化
-            "com.google.android.ext.services",    // Android Services Library
-            "com.google.android.providers.media.module",    // 媒体
-            "com.google.android.wifi.resources",    // 系统 WLAN 资源
-            "com.google.android.hotspot2.osulogin",    // OsuLogin
-            "com.google.android.safetycenter.resources",    // Google 安全中心资源
-            "com.google.android.permissioncontroller",    // 权限控制器
-            "com.google.android.ondevicepersonalization.services",    // 
-            "com.google.android.adservices.api",    // Android 系统
-            "com.google.android.devicelockcontroller",    // DeviceLockController
-            "com.google.android.connectivity.resources",    // 系统网络连接资源
-            "com.google.android.healthconnect.controller",    // Health Connect
-            "com.google.android.cellbroadcastreceiver",    // 无线紧急警报
-            "com.google.android.uwb.resources",    // System UWB Resources
-            "com.google.android.rkpdapp",    // RemoteProvisioner
-
-
+            "com.android.settings" //设置
             "com.android.launcher",
             "com.android.launcher2",
             "com.android.launcher3",
             "com.android.launcher4",
-            "com.android.camera",
-            "com.android.camera2",
             "com.android.apps.tag", // Tags
             "com.android.bips", // 系统打印服务
             "com.android.bluetoothmidiservice", // Bluetooth MIDI Service
@@ -262,6 +210,13 @@ private:
             "com.mediatek.op09clib.phone.plugin", // OP09ClibTeleService
             "com.mediatek.op09clib.telecom", // OP09ClibTelecom
             "com.mediatek.ygps", // YGPS
+            "com.miui.accessibility", // 小米无障碍
+            "com.miui.core", // MIUI SDK
+            "com.miui.privacycomputing", // MIUI Privacy Components
+            "com.miui.securityadd", // 系统服务组件
+            "com.miui.securityinputmethod", // 小米安全键盘
+            "com.miui.system", // com.miui.internal.app.SystemApplication
+            "com.miui.vpnsdkmanager", // MiuiVpnSdkManager
             "com.tencent.soter.soterserver", // SoterService
             "com.unionpay.tsmservice.mi", // 银联可信服务安全组件小米版本
 
@@ -301,7 +256,7 @@ private:
             "org.lineageos.recorder", // 录音机
             "org.lineageos.updater", // 系统更新
             "org.protonaosp.deviceconfig", // Simple Device Configuration
-
+ 
             "android.aosp.overlay",
             "android.miui.home.launcher.res",
             "android.miui.overlay",
@@ -408,6 +363,17 @@ private:
             "org.protonaosp.deviceconfig.auto_generated_rro_product__",
 
     };
+    const unordered_set<string> AudioPlayerList{
+        "com.netease.cloudmusic",
+        "com.tencent.qqmusic",
+        "com.kugou.android",
+        "com.kugou.android.lite",
+        "cn.kuwo.player",
+        "com.ximalaya.ting.android",
+        "com.tencent.karaoke",
+        "com.ss.android.ugc.aweme",
+        "tv.danmaku.bili"
+    };
 
     const unordered_set<string> whiteListDefault{
         "com.mi.health",                        // 小米运动健康
@@ -430,6 +396,7 @@ public:
             FREEZE_MODE::WHITELIST,
             FREEZE_MODE::WHITEFORCE,
     };
+
     ManagedApp& operator=(ManagedApp&&) = delete;
 
     ManagedApp(Freezeit& freezeit, Settings& settings) : freezeit(freezeit), settings(settings) {
@@ -461,9 +428,9 @@ public:
 
     bool contains(const string& package) const { return uidIndex.contains(package); }
 
-    bool isBlackList(const int uid) { return contains(uid) && appInfoMap[uid - UID_START].isBlacklist(); }
-
     auto& getLabel(const int uid) { return appInfoMap[uid - UID_START].label; }
+
+    const unordered_set<string>& getAudioPlayerList() const { return AudioPlayerList; }
 
     int getUid(const string& package) { return uidIndex[package]; }
 
@@ -583,20 +550,18 @@ public:
         START_TIME_COUNT;
 
         map<int, string> allAppList, thirdAppList;
-        char tmp[1024];
-        int SDK_INT_VER = __system_property_get("ro.build.version.sdk", tmp) > 0 ? atoi(tmp) : 0;
-        if (SDK_INT_VER >= 31) {
-			if (!readPackagesListA12(allAppList, thirdAppList)) {
-				readCmdPackagesAll(allAppList);
-				readCmdPackagesThird(thirdAppList);
-			}
-		}
-		else {
-			if (!readPackagesListA10_11(allAppList)){
-			    readCmdPackagesAll(allAppList);
-			    readCmdPackagesThird(thirdAppList);
+
+        if (freezeit.SDK_INT_VER >= 31) {
+            if (!readPackagesListA12(allAppList, thirdAppList)) {
+                readCmdPackagesAll(allAppList);
+                readCmdPackagesThird(thirdAppList);
             }
-		}
+        }
+        else {
+            if (!readPackagesListA10_11(allAppList))
+                readCmdPackagesAll(allAppList);
+            readCmdPackagesThird(thirdAppList);
+        }
 
         if (allAppList.size() == 0) {
             freezeit.log("没有应用或获取失败");
@@ -614,7 +579,7 @@ public:
             if (contains(uid))continue;
 
             const bool isSYS = !thirdAppList.contains(uid);
-            appInfoMap[uid - UID_START] = appInfoStruct{
+            new (&appInfoMap[uid - UID_START]) appInfoStruct{
                 .uid = uid,
                 .freezeMode = isSYS ? FREEZE_MODE::WHITELIST : FREEZE_MODE::FREEZER,
                 .isPermissive = true,
@@ -669,14 +634,14 @@ public:
                 if (it == uidIndex.end())continue;
                 uid = it->second;
             }
-
             const FREEZE_MODE freezeMode = static_cast<FREEZE_MODE>(atoi(value[1].c_str()));
             const bool isPermissive = atoi(value[2].c_str()) != 0;
+
             if (!FREEZE_MODE_SET.contains(freezeMode)) {
                 freezeit.logFmt("C配置错误: [%s]", line.c_str());
                 continue;
             }
-            
+
             cfgTemp[uid] = { freezeMode, isPermissive };
         }
         file.close();
@@ -712,7 +677,6 @@ public:
 
     bool isSystemApp(const char* ptr) {
         const char* prefix[] = {
-                "com.xiaomi.",
                 "com.miui.",
                 "com.oplus.",
                 "com.coloros.",
@@ -728,6 +692,7 @@ public:
         }
         return false;
     }
+
     void applyCfgTemp() {
         for (auto& appInfo : appInfoMap) {
             if (appInfo.uid < UID_START)continue;
@@ -743,12 +708,14 @@ public:
                 appInfo.isPermissive = cfg.isPermissive;
             }
         }
+
         for (auto& appInfo : appInfoMap) {
             if (appInfo.uid < UID_START)continue;
 
             if (whiteListForce.contains(appInfo.package))
                 appInfo.freezeMode = FREEZE_MODE::WHITEFORCE;
         }
+
         if (homePackage.length() > 3) {
             auto it = uidIndex.find(homePackage);
             if (it != uidIndex.end())
@@ -763,8 +730,7 @@ public:
             if (appInfo.uid < UID_START)continue;
 
             if (appInfo.freezeMode < FREEZE_MODE::WHITEFORCE) {
-                tmp += appInfo.package;
-                tmp += " ";
+                tmp += appInfo.package + " ";
                 tmp += to_string(static_cast<int>(appInfo.freezeMode));
                 tmp += " ";
                 tmp += to_string(appInfo.isPermissive ? 1 : 0);
@@ -777,6 +743,7 @@ public:
     }
 
     void update2xposedByLocalSocket() {
+
         string tmp;
         tmp.reserve(1024L * 16);
 
@@ -786,7 +753,7 @@ public:
         }
         tmp += '\n';
 
-        vector<int> permissiveUids;
+        vector<int> tolerantUids;
         for (const auto& appInfo : appInfoMap) {
             if (appInfo.uid < UID_START)continue;
 
@@ -797,11 +764,11 @@ public:
             tmp += ' ';
 
             if (appInfo.isPermissive)
-                permissiveUids.emplace_back(appInfo.uid);
+                tolerantUids.emplace_back(appInfo.uid);
         }
         tmp += '\n';
 
-        for (const int uid : permissiveUids) {
+        for (const int uid : tolerantUids) {
             tmp += to_string(uid);
             tmp += ' ';
         }
@@ -809,7 +776,7 @@ public:
 
         for (int i = 0; i < 3; i++) {
             int buff[8];
-            const int recvLen = Utils::localSocketRequest(XPOSED_CMD::SET_CONFIG, tmp.c_str(),
+            int recvLen = Utils::localSocketRequest(XPOSED_CMD::SET_CONFIG, tmp.c_str(),
                 tmp.length(), buff, sizeof(buff));
 
             if (recvLen != 4) {
@@ -834,7 +801,7 @@ public:
                 return;
             }
         }
-        freezeit.logFmt("%s() 工作异常, 请确认LSPosed中Frozen是否已经勾选系统框架 sendLen[%lu]", __FUNCTION__,
+        freezeit.logFmt("%s() 工作异常, 请确认LSPosed中Frozen勾选系统框架, 然后重启 sendLen[%lu]", __FUNCTION__,
             tmp.length());
     }
 

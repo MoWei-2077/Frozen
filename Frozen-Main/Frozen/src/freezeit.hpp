@@ -18,7 +18,14 @@ private:
 
     string propPath;
 
-    uint8_t* deBugFlagPtr = nullptr;
+    map<string, string> prop{
+            {"id",          "Unknown"},
+            {"name",        "Unknown"},
+            {"version",     "Unknown"},
+            {"versionCode", "0"},
+            {"author",      "Unknown"},
+            {"description", "Unknown"},
+    };
 
     // "Jul 28 2022" --> "2022-07-28"
     const char compilerDate[12] = {
@@ -48,6 +55,7 @@ private:
             __DATE__[5],// Second day letter
         '\0',
     };
+
 
     void toMem(const char* logStr, const int len) {
         if ((position + len) >= BUFF_SIZE)
@@ -79,28 +87,26 @@ private:
         fclose(fp);
     }
 
-
 public:
 
     bool isSamsung{ false };
     bool isOppoVivo{ false };
 
+    int ANDROID_VER = 0;
+    int SDK_INT_VER = 0;
+    KernelVersionStruct kernelVersion;
 
     string modulePath;
     string moduleEnv{ "Unknown" };
+    string workMode{ "Unknown" };
+    string kernelVerStr{ "Unknown" };
+    string androidVerStr{ "Unknown" };
 
-    map<string, string> prop{
-            {"id",          "Unknown"},
-            {"name",        "Unknown"},
-            {"version",     "Unknown"},
-            {"versionCode", "0"},
-            {"author",      "Unknown"},
-            {"description", "Unknown"},
-    };
+    uint32_t extMemorySize{ 0 };
 
     Freezeit& operator=(Freezeit&&) = delete;
 
-    Freezeit(int argc, const string& fullPath) {
+    Freezeit(int argc, string& fullPath) {
 
         modulePath = Utils::parentDir(fullPath);
 
@@ -132,14 +138,6 @@ public:
         if (versionCode > 0)
             moduleEnv += " (" + to_string(versionCode) + ")";
 
-        auto fp = fopen((modulePath + "/boot.log").c_str(), "rb");
-        if (fp) {
-            auto len = fread(logCache, 1, BUFF_SIZE, fp);
-            if (len > 0)
-                position = len;
-            fclose(fp);
-        }
-
         toFileFlag = argc > 1;
         if (toFileFlag) {
             if (position)toFile(logCache, position);
@@ -148,13 +146,13 @@ public:
         }
 
         propPath = modulePath + "/module.prop";
-        fp = fopen(propPath.c_str(), "r");
+        auto fp = fopen(propPath.c_str(), "r");
         if (!fp) {
             fprintf(stderr, "找不到模块属性文件 [%s]", propPath.c_str());
             exit(-1);
         }
 
-        char tmp[1024 * 4];
+        char tmp[1024*4];
         while (!feof(fp)) {
             fgets(tmp, sizeof(tmp), fp);
             if (!isalpha(tmp[0])) continue;
@@ -173,12 +171,27 @@ public:
         }
         fclose(fp);
 
-
-
-        logFmt("模块版本 %s(%s)", prop["version"].c_str(), prop["versionCode"].c_str());
+        logFmt("模块版本 %s", prop["version"].c_str());
         logFmt("编译时间 %s %s UTC+8", compilerDate, __TIME__);
 
         fprintf(stderr, "version %s", prop["version"].c_str()); // 发送当前版本信息给监控进程
+
+        ANDROID_VER = __system_property_get("ro.build.version.release", tmp) > 0 ? atoi(tmp) : 0;
+        SDK_INT_VER = __system_property_get("ro.build.version.sdk", tmp) > 0 ? atoi(tmp) : 0;
+        androidVerStr = to_string(ANDROID_VER) + " (API " + to_string(SDK_INT_VER) + ")";
+
+        utsname kernelInfo{};
+        if (!uname(&kernelInfo)) {
+            sscanf(kernelInfo.release, "%d.%d.%d", &kernelVersion.main, &kernelVersion.sub,
+                &kernelVersion.patch);
+            kernelVerStr =
+                to_string(kernelVersion.main) + "." + to_string(kernelVersion.sub) + "." +
+                to_string(kernelVersion.patch);
+            logFmt("内核版本 %d.%d.%d", kernelVersion.main, kernelVersion.sub, kernelVersion.patch);
+        }
+        else {
+            log("内核版本 获取异常");
+        }
 
         char res[256];
         if (__system_property_get("gsm.operator.alpha", res) > 0 && res[0] != ',')
@@ -204,16 +217,6 @@ public:
             logFmt("硬件平台 %s %s", res, res + 100);
     }
 
-    void setDebugPtr(uint8_t* ptr) {
-        deBugFlagPtr = ptr;
-    }
-    bool isDebugOn() {
-        if (deBugFlagPtr == nullptr)
-            return false;
-
-        return *deBugFlagPtr;
-    }
-
     bool saveProp() {
         auto fp = fopen(propPath.c_str(), "wb");
         if (!fp)
@@ -233,14 +236,46 @@ public:
         return (writeLen == len);
     }
 
+    void setWorkMode(const string& mode) {
+        workMode = mode;
+    }
 
-    int formatTimePrefix() {
+    size_t formatProp(char* ptr, const size_t maxSize, const int cpuCluster) {
+        return snprintf(ptr, maxSize, "%s\n%s\n%s\n%s\n%s\n%d\n%s\n%s\n%s\n%s\n%u",
+            prop["id"].c_str(), prop["name"].c_str(), prop["version"].c_str(),
+            prop["versionCode"].c_str(), prop["author"].c_str(),
+            cpuCluster, moduleEnv.c_str(), workMode.c_str(),
+            androidVerStr.c_str(), kernelVerStr.c_str(), extMemorySize);
+    }
+
+    void log(const string& logContent) {
+        log(logContent.c_str());
+    }
+
+    void logview(const string_view& str) {
+        lock_guard<mutex> lock(logPrintMutex);
+
+        const int prefixLen = formatTime();
+
+        int len = str.length() + prefixLen;
+        memcpy(lineCache + prefixLen, str.data(), str.length());
+
+        lineCache[len++] = '\n';
+
+        if (toFileFlag)
+            toFile(lineCache, len);
+        else
+            toMem(lineCache, len);
+    }
+
+
+    int formatTime() {
         time_t timeStamp = time(nullptr) + 8 * 3600L;
         int hour = (timeStamp / 3600) % 24;
         int min = (timeStamp % 3600) / 60;
         int sec = timeStamp % 60;
 
-        //lineCache[LINE_SIZE] = "[00:00:00] ";
+        //lineCache[LINE_SIZE] = "[00:00:00]  ";
         lineCache[1] = (hour / 10) + '0';
         lineCache[2] = (hour % 10) + '0';
         lineCache[4] = (min / 10) + '0';
@@ -250,33 +285,13 @@ public:
 
         return 11;
     }
-
-    int formatTimeDebug() {
-        time_t timeStamp = time(nullptr) + 8 * 3600L;
-        int hour = (timeStamp / 3600) % 24;
-        int min = (timeStamp % 3600) / 60;
-        int sec = timeStamp % 60;
-
-        //lineCache[LINE_SIZE] = "[00:00:00] DEBUG ";
-        lineCache[1] = (hour / 10) + '0';
-        lineCache[2] = (hour % 10) + '0';
-        lineCache[4] = (min / 10) + '0';
-        lineCache[5] = (min % 10) + '0';
-        lineCache[7] = (sec / 10) + '0';
-        lineCache[8] = (sec % 10) + '0';
-
-        memcpy(lineCache + 11, "DEBUG ", 6);
-
-        return 17;
-    }
-
-    void log(const string_view& str) {
+    void log(const char* str) {
         lock_guard<mutex> lock(logPrintMutex);
 
-        const int prefixLen = formatTimePrefix();
+        const int prefixLen = formatTime();
+        int len = strlen(str) + prefixLen;
 
-        int len = str.length() + prefixLen;
-        memcpy(lineCache + prefixLen, str.data(), str.length());
+       memcpy(lineCache + prefixLen, str, strlen(str));
 
         lineCache[len++] = '\n';
 
@@ -285,60 +300,17 @@ public:
         else
             toMem(lineCache, len);
     }
-
 
     template<typename... Args>
     void logFmt(const char* fmt, Args&&... args) {
         lock_guard<mutex> lock(logPrintMutex);
 
-        const int prefixLen = formatTimePrefix();
+        const int prefixLen = formatTime();
 
         int len = snprintf(lineCache + prefixLen, (size_t)(LINE_SIZE - prefixLen), fmt, std::forward<Args>(args)...) + prefixLen;
 
         if (len <= 11 || LINE_SIZE <= (len + 1)) {
             lineCache[11] = 0;
-            fprintf(stderr, "日志异常: len[%d] lineCache[%s]", len, lineCache);
-            return;
-        }
-
-        lineCache[len++] = '\n';
-
-        if (toFileFlag)
-            toFile(lineCache, len);
-        else
-            toMem(lineCache, len);
-    }
-
-    void debug(const string_view& str) {
-        if (!isDebugOn())return;
-
-        lock_guard<mutex> lock(logPrintMutex);
-
-        const int prefixLen = formatTimeDebug();
-
-        int len = str.length() + prefixLen;
-        memcpy(lineCache + prefixLen, str.data(), str.length());
-
-        lineCache[len++] = '\n';
-
-        if (toFileFlag)
-            toFile(lineCache, len);
-        else
-            toMem(lineCache, len);
-    }
-
-    template<typename... Args>
-    void debugFmt(const char* fmt, Args&&... args) {
-        if (!isDebugOn())return;
-
-        lock_guard<mutex> lock(logPrintMutex);
-
-        const int prefixLen = formatTimeDebug();
-
-        int len = snprintf(lineCache + prefixLen, (size_t)(LINE_SIZE - prefixLen), fmt, std::forward<Args>(args)...) + prefixLen;
-
-        if (len <= 13 || LINE_SIZE <= (len + 1)) {
-            lineCache[13] = 0;
             fprintf(stderr, "日志异常: len[%d] lineCache[%s]", len, lineCache);
             return;
         }
