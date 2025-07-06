@@ -50,6 +50,7 @@
 #include <sys/mount.h>
 #include <sys/system_properties.h>
 
+
 using std::atomic;
 using std::set;
 using std::unordered_set;
@@ -75,6 +76,7 @@ constexpr auto FORK_DOUBLE = 1;
 
 #define DEBUG_LOG            1
 #define DEBUG_DURATION       0
+
 // *****************************
 
 #if DEBUG_LOG
@@ -82,6 +84,7 @@ constexpr auto FORK_DOUBLE = 1;
 #else
 #define DLOG(...) ((void)0)
 #endif
+
 
 #if DEBUG_DURATION
 #define START_TIME_COUNT auto start_clock = clock()
@@ -513,7 +516,7 @@ namespace Utils {
     }
 
 
-    void WriteFile(const char* filePath, const char* content) noexcept {
+    void FileWrite(const char* filePath, const char* content) noexcept {
         int fd = open(filePath, O_CREAT | O_WRONLY | O_TRUNC, 0666);
 
         if (fd < 0) {
@@ -605,7 +608,6 @@ namespace Utils {
         return recvLen;
     }
 
-
     void printException(
         const char* versionStr, 
         const int exceptionCnt, 
@@ -672,7 +674,7 @@ namespace Utils {
         umask(0);
         chdir("/");
 
-        // signal(SIGCHLD, SIG_IGN);//屏蔽SIGCHLD信号 通知内核对子进程的结束不关心，由内核回收
+      //  signal(SIGCHLD, SIG_IGN);//屏蔽SIGCHLD信号 通知内核对子进程的结束不关心，由内核回收
         int fd_response[2];
         pipe(fd_response);
 

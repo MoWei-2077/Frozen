@@ -279,20 +279,21 @@ public:
 
     bool checkIfNeedToEnter() {
         constexpr int TIMEOUT = 60;
-        static int secCnt = 30;
-
-        if (isScreenOffStandby || ++secCnt < TIMEOUT)
-            return false;
-
-        secCnt = 0;
-
-        if (isInteractive())
-            return false;
-
+        static time_t lastCheckTime = 0;
         const time_t nowTimeStamp = time(nullptr);
-        if ((nowTimeStamp - lastInteractiveTime) < (TIMEOUT + 60L))
-            return false;
 
+        if (isScreenOffStandby || (nowTimeStamp - lastCheckTime) < TIMEOUT) 
+            return false;
+        
+        if (isInteractive()) {
+            lastCheckTime = nowTimeStamp;    
+            return false;
+        }
+    
+        if ((nowTimeStamp - lastInteractiveTime) < (TIMEOUT + 60)) 
+            return false;
+        
+ 
         if (settings.enableDebug)
             freezeit.log("息屏状态已超时，正在确认息屏状态");
 

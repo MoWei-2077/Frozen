@@ -1,5 +1,6 @@
 #pragma once
 
+#include <arpa/inet.h>  // 添加 inet_ntop 和 INET_ADDRSTRLEN 的头文件
 #include "utils.hpp"
 #include "freezeit.hpp"
 #include "managedApp.hpp"
@@ -21,7 +22,6 @@ private:
     static const int RECV_BUF_SIZE = 2 * 1024 * 1024;  // 2 MiB TCP通信接收缓存大小
     static const int REPLY_BUF_SIZE = 8 * 1024 * 1024; // 8 MiB TCP通信回应缓存大小
     unique_ptr<char[]> recvBuf, replyBuf;
-
 public:
     Server& operator=(Server&&) = delete;
 
@@ -131,23 +131,36 @@ public:
                 uint8_t dataHeader[6];
                 uint32_t recvLen = recv(clnt_sock, dataHeader, sizeof(dataHeader), MSG_WAITALL);
                 if (recvLen != sizeof(dataHeader)) {
+                    static int socketErrorCount = 0;
+                    socketErrorCount++;
+
+                    // 记录详细的错误信息，使用最简单的方式
+                    freezeit.logFmt("Socket通信异常: 第%d次接收数据头失败, 错误码[%d], 接收长度[%u]", 
+                        socketErrorCount, errno, recvLen);
+
+                    // 如果连续多次失败，记录并重置计数
+                    if (socketErrorCount > 10) {
+                        freezeit.log("Socket通信多次失败，可能存在严重网络问题");
+                        socketErrorCount = 0;
+                    }
+
                     close(clnt_sock);
-                    fprintf(stderr, "clnt_sock recv dataHeader len[%u]", recvLen);
                     continue;
                 }
 
+                // 增加对特殊数据头的详细日志
                 recvLen = *((uint32_t*)dataHeader);
                 uint32_t appCommand = dataHeader[4];
                 uint32_t XOR_value = dataHeader[5];
 
-                // "\0AUTH\n" B站发的，前4字节： 大端 4281684, 小端 1414873344
                 if (recvLen == 1414873344 || recvLen == 4281684) {
+                    freezeit.logFmt("检测到特殊数据头: recvLen[%u], 可能是非法连接", recvLen);
                     close(clnt_sock);
                     continue;
                 }
                 else if (recvLen >= RECV_BUF_SIZE) {
-                    freezeit.logFmt("数据格式异常 recvLen[%u] HEX[%s]", recvLen,
-                        Utils::bin2Hex(dataHeader, 6).c_str());
+                    freezeit.logFmt("数据格式异常 recvLen[%u] HEX[%s], 命令[%u]", recvLen,
+                        Utils::bin2Hex(dataHeader, 6).c_str(), appCommand);
                     close(clnt_sock);
                     continue;
                 }
@@ -375,13 +388,13 @@ public:
         case MANAGER_CMD::setAppLabel: {
             managedApp.updateAppList(); // 先更新应用列表
 
-            map<int, string> labelList;
+            map<int, string> labelList, doublelabelList;
             for (const string& str : Utils::splitString(string(recvBuf.get(), recvLen),
                 "\n")) {
                 const int uid = atoi(str.c_str());
-                if (!managedApp.contains(uid) || str.length() <= 6)
+                if (!managedApp.contains(uid) || str.length() <= 6)  //if (!managedApp.contains(uid) || str.length() <= 6) 
                     freezeit.logFmt("解析名称错误 [%s]", str.c_str());
-                else labelList[uid] = str.substr(6);
+                else labelList[uid] = str.substr(6); //str.substr(6);
             }
 
             string labelStr;

@@ -417,6 +417,7 @@ public:
     const static int UID_START = 10000;
     const static int UID_END = 14000;
     const static int appMaxNum = UID_END - UID_START;
+
     appInfoStruct appInfoMap[appMaxNum];
 
     auto& operator[](const int uid) { return appInfoMap[uid - UID_START]; }
@@ -550,7 +551,7 @@ public:
         START_TIME_COUNT;
 
         map<int, string> allAppList, thirdAppList;
-
+        
         if (freezeit.SDK_INT_VER >= 31) {
             if (!readPackagesListA12(allAppList, thirdAppList)) {
                 readCmdPackagesAll(allAppList);
