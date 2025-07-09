@@ -34,6 +34,7 @@
 #include <netinet/in.h>
 #include <linux/input.h>
 #include <linux/android/binder.h>
+
 #include <sys/un.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -49,9 +50,9 @@
 #include <sys/prctl.h>
 #include <sys/mount.h>
 #include <sys/system_properties.h>
+#include <linux/netlink.h>
+#include <netinet/tcp.h>
 
-
-using std::atomic;
 using std::set;
 using std::unordered_set;
 using std::map;
@@ -68,7 +69,6 @@ using std::mutex;
 
 using std::make_unique;
 using std::to_string;
-using std::move;
 
 
 // 配置编译选项 *****************
@@ -76,7 +76,6 @@ constexpr auto FORK_DOUBLE = 1;
 
 #define DEBUG_LOG            1
 #define DEBUG_DURATION       0
-
 // *****************************
 
 #if DEBUG_LOG
@@ -84,7 +83,6 @@ constexpr auto FORK_DOUBLE = 1;
 #else
 #define DLOG(...) ((void)0)
 #endif
-
 
 #if DEBUG_DURATION
 #define START_TIME_COUNT auto start_clock = clock()
@@ -104,23 +102,13 @@ constexpr auto FORK_DOUBLE = 1;
 #define ASYNC_RECEIVED_WHILE_FROZEN (2)
 #define TXNS_PENDING_WHILE_FROZEN (4)
 
-#define BITS_PER_LONG (sizeof(long) * 8)
-#define test_bit(array, bit)    ((array[bit / BITS_PER_LONG] >> bit % BITS_PER_LONG) & 1)
-#define NBITS(x)             ((((x)-1)/BITS_PER_LONG)+1)
-
 enum class WORK_MODE : uint32_t {
     GLOBAL_SIGSTOP = 0,
     V1 = 1,
-    V1_ST = 2,
-    V2UID = 3,
-    V2FROZEN = 4,
+    V2UID = 2,
+    V2FROZEN = 3,
 };
 
-enum class MemoryRecycleMode : uint32_t {
-    ALL = 1,
-    ANON = 2,
-    FILE = 3,
-};
 enum class FREEZE_MODE : uint32_t {
     TERMINATE = 10,
     SIGNAL = 20,
@@ -131,21 +119,20 @@ enum class FREEZE_MODE : uint32_t {
     WHITEFORCE = 50,
 };
 
+// 1668424211 是 "Frozen" 的10进制CRC32值
 const int baseCode = 1668424211;
 
 enum class XPOSED_CMD : uint32_t {
-    // 1359322925 是 "Frozen" 的10进制CRC32值
     GET_FOREGROUND = baseCode + 1,
     GET_SCREEN = baseCode + 2,
     GET_XP_LOG = baseCode + 3,
-    
+
     SET_CONFIG = baseCode + 20,
     SET_WAKEUP_LOCK = baseCode + 21,
 
     BREAK_NETWORK = baseCode + 41,
 
     UPDATE_PENDING = baseCode + 60,   // 更新待冻结应用
-    UPDATE_PENDINGINTENT = baseCode + 80, // 后台意图
 };
 
 enum class REPLY : uint32_t {
@@ -210,12 +197,12 @@ struct uidTimeStruct {
     int total = 0;
 };
 
-struct appInfoStruct { 
+struct appInfoStruct {
     int uid = -1;
-    atomic<bool> FreezeStat{false};
     FREEZE_MODE freezeMode = FREEZE_MODE::FREEZER; // [10]:杀死 [20]:SIGSTOP [30]:freezer [40]:配置 [50]:内置
-    bool isPermissive = true;        // 宽容的 有前台服务也算前台
-    int delayCnt = 0;         // 冻结失败计数
+    bool isPermissive = true;      // 宽容的 有前台服务也算前台
+    int delayCnt = 0;              // Binder冻结失败而延迟次数
+    int timelineUnfrozenIdx = -1;  // 解冻时间线索引
     bool isSystemApp = true;       // 是否系统应用
     time_t startTimestamp = 0;     // 某次开始运行时刻
     time_t stopTimestamp = 0;      // 某次冻结运行时刻
@@ -223,6 +210,7 @@ struct appInfoStruct {
     string package;                // 包名
     string label;                  // 名称
     vector<int> pids;              // PID列表
+
     bool needBreakNetwork() const {
         return freezeMode == FREEZE_MODE::SIGNAL_BREAK || freezeMode == FREEZE_MODE::FREEZER_BREAK;
     }
@@ -244,9 +232,6 @@ struct appInfoStruct {
     bool isTerminateMode() const {
         return freezeMode == FREEZE_MODE::TERMINATE;
     }
-    bool isFreezeStat() const {
-        return FreezeStat.load();
-    }
 };
 
 struct cfgStruct {
@@ -254,7 +239,7 @@ struct cfgStruct {
     bool isPermissive = true;
 };
 
-template<size_t CAPACITY=32>
+template<const size_t CAPACITY=32>
 class stackString {
 public:
     size_t length{ 0 };
@@ -265,18 +250,32 @@ public:
 
     stackString() { data[0] = 0; }
     stackString(const string_view& s) {
-        memcpy(data, s.data(), s.length());
-        length = s.length();
-        data[length] = 0;
+        if (s.length() >= CAPACITY - 1) {
+            memcpy(data, s.data(), CAPACITY - 1);
+            length = CAPACITY - 1;
+            data[CAPACITY - 1] = 0;
+        }
+        else {
+            memcpy(data, s.data(), s.length());
+            length = s.length();
+            data[length] = 0;
+        }
     }
     stackString(const char* s, const size_t len) {
-        memcpy(data, s, len);
-        length = len;
-        data[length] = 0;
+        if (len >= CAPACITY - 1) {
+            memcpy(data, s, CAPACITY - 1);
+            length = CAPACITY - 1;
+            data[CAPACITY - 1] = 0;
+        }
+        else {
+            memcpy(data, s, len);
+            length = len;
+            data[length] = 0;
+        }
     }
 
     stackString& append(const int n) {
-        char tmp[16];
+        char tmp[16] = {};
         return append(tmp, static_cast<size_t>(snprintf(tmp, sizeof(tmp), "%d", n)));
     }
 
@@ -402,43 +401,6 @@ namespace Utils {
         return res;
     }
 
-    int Is_Event(const struct dirent* Dir) {
-        return strncmp("event", Dir->d_name, 5) == 0;
-    }
-
-    string GetTouchScreenDevice() {
-        struct dirent** namelist;
-        int ndev = scandir("/dev/input", &namelist, Is_Event, alphasort);
-        if (ndev <= 0) {
-            return "";
-        }
-        for (int i = 0; i < ndev; i++) {
-            char fname[64];
-            int fd = -1;
-            unsigned long keybit[NBITS(KEY_CNT)];
-            unsigned long propbit[INPUT_PROP_MAX];
-            snprintf(fname, sizeof(fname), "%s/%s", "/dev/input", namelist[i]->d_name);
-            fd = open(fname, O_RDONLY | O_NONBLOCK);
-            if (fd < 0) {
-                continue;
-            }
-            memset(keybit, 0, sizeof(keybit));
-            memset(propbit, 0, sizeof(propbit));
-            ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybit)), keybit);
-            ioctl(fd, EVIOCGPROP(INPUT_PROP_MAX), propbit);
-            close(fd);
-            free(namelist[i]);
-            if (test_bit(propbit, INPUT_PROP_DIRECT) && (test_bit(keybit, BTN_TOUCH) || test_bit(keybit, BTN_TOOL_FINGER))) {
-                return string(fname);
-            }
-            else if (test_bit(keybit, BTN_TOUCH) || test_bit(keybit, BTN_TOOL_FINGER)) {
-                return string(fname);
-            }
-        }
-        return "";
-    }
-
-
     int readInt(const char* path) {
         auto fd = open(path, O_RDONLY);
         if (fd < 0) return 0;
@@ -475,16 +437,6 @@ namespace Utils {
         return readLen;
     }
 
-    bool popenShell(const char* cmd) {
-        auto fp = popen(cmd,"r");
-        if (fp == nullptr) {
-            fprintf(stderr, " 创建popen管道失败", errno, strerror(errno)); 
-            return false;
-        }
-        pclose(fp);
-        return true;
-    }
-
     // 最大读取 64 KiB
     string readString(const char* path) {
         char buff[64 * 1024];
@@ -496,14 +448,14 @@ namespace Utils {
         auto fd = open(path, O_WRONLY);
         if (fd <= 0) return false;
 
-        char tmp[16]; 
+        char tmp[16];
         auto len = snprintf(tmp, sizeof(tmp), "%d", value);
         write(fd, tmp, len);
         close(fd);
         return true;
     }
 
-    bool writeString(const char* path, const char* buff, size_t len = 0) noexcept {
+    bool writeString(const char* path, const char* buff, size_t len = 0) {
         if (len == 0)len = strlen(buff);
         if (len == 0)return true;
 
@@ -514,7 +466,6 @@ namespace Utils {
         close(fd);
         return true;
     }
-
 
     void FileWrite(const char* filePath, const char* content) noexcept {
         int fd = open(filePath, O_CREAT | O_WRONLY | O_TRUNC, 0666);
@@ -529,11 +480,11 @@ namespace Utils {
             close(fd);
         }
     } 
-
+    
     void sleep_ms(int ms) {
         usleep(1000 * ms);
     }
-    
+
     char lastChar(char* ptr) {
         if (!ptr)return 0;
         while (*ptr) ptr++;
@@ -576,9 +527,8 @@ namespace Utils {
         // https://blog.csdn.net/howellzhu/article/details/111597734
         // https://blog.csdn.net/shanzhizi/article/details/16882087 一种是路径方式 一种是抽象命名空间
         constexpr int addrLen =
-            offsetof(sockaddr_un, sun_path) + 19; // addrLen大小是 "\0FreezeitXposedServer" 的字符长度 
+            offsetof(sockaddr_un, sun_path) + 19; // addrLen大小是 "\0FreezeitXposedServer" 的字符长度
         constexpr sockaddr_un srv_addr{ AF_UNIX, "\0FrozenXposedServer" }; // 首位为空[0]=0，位于Linux抽象命名空间
-
 
         auto fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd < 0)
@@ -608,12 +558,17 @@ namespace Utils {
         return recvLen;
     }
 
+
     void printException(
-        const char* versionStr, 
-        const int exceptionCnt, 
+        const char* versionStr,
+        const int exceptionCnt,
         const char* exceptionBuf,
-        const size_t bufSize) {
-        auto fp = fopen("/sdcard/Android/Frozen_crash_log.txt", "ab");
+        size_t bufSize = 0) {
+
+        if (bufSize == 0)
+            bufSize = strlen(exceptionBuf);
+
+        auto fp = fopen("/sdcard/Android/freezeit_crash_log.txt", "ab");
         if (!fp) return;
 
         auto timeStamp = time(nullptr);
@@ -633,24 +588,22 @@ namespace Utils {
 
 
     void Init() {
-        auto now = std::chrono::system_clock::now();
-        auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
-        srand(ns);
+        srand(std::chrono::system_clock::now().time_since_epoch().count());
+        usleep(1000 * (rand() & 0x7ff)); //随机休眠 1ms ~ 2s
 
-        // 检查是否还有其他Frozen进程，防止进程多开
+        // 检查是否还有其他freezeit进程，防止进程多开
         char buf[256] = { 0 };
         if (popenRead("pidof Frozen", buf, sizeof(buf)) == 0) {
-            printException(nullptr, 0, "进程检测失败", 18);
+            printException(nullptr, 0, "进程检测失败");
             exit(-1);
         }
 
         auto ptr = strchr(buf, ' ');
         if (ptr) { // "pidNum1 pidNum2 ..."  如果存在多个pid就退出
-            *ptr = 0;
             char tips[256];
             auto len = snprintf(tips, sizeof(tips),
-                "Frozen已经在运行(pid: %s), 当前进程(pid:%d)即将退出，"
-                "请勿手动启动Frozen, 也不要在多个框架同时安装Frozen模块", buf, getpid());
+                "冻它已经在运行(pid: %s), 当前进程(pid:%d)即将退出，"
+                "请勿手动启动冻它, 也不要在多个框架同时安装冻它模块", buf, getpid());
             printf("\n!!! \n!!! %s\n!!!\n\n", tips);
             printException(nullptr, 0, tips, len);
             exit(-2);
@@ -663,7 +616,7 @@ namespace Utils {
         pid_t pid = fork();
 
         if (pid < 0) { //创建失败
-            printException(nullptr, 0, "脱离终端Fork失败", 22);
+            printException(nullptr, 0, "脱离终端Fork失败");
             exit(-1);
         }
         else if (pid > 0) { //父进程返回的是 子进程的pid
@@ -674,13 +627,13 @@ namespace Utils {
         umask(0);
         chdir("/");
 
-      //  signal(SIGCHLD, SIG_IGN);//屏蔽SIGCHLD信号 通知内核对子进程的结束不关心，由内核回收
+        // signal(SIGCHLD, SIG_IGN);//屏蔽SIGCHLD信号 通知内核对子进程的结束不关心，由内核回收
         int fd_response[2];
         pipe(fd_response);
 
         pid = fork(); //成为守护进程后再次Fork, 父进程监控， 子进程工作
         if (pid < 0) {
-            printException(nullptr, 0, "创建工作进程Fork失败", 28);
+            printException(nullptr, 0, "创建工作进程Fork失败");
             exit(-1);
         }
         else if (pid > 0) { //父进程 监控子进程输出的异常信息，并写到异常日志
@@ -697,8 +650,7 @@ namespace Utils {
                 if (readLen <= 0) {
                     readLen = snprintf(exceptionBuf, 64, "[第%d次无效日志]", ++zeroCnt);
                 }
-                else
-                 if (!strncmp(exceptionBuf, "version ", 8)) {
+                else if (!strncmp(exceptionBuf, "version ", 8)) {
                     memcpy(versionStr, exceptionBuf + 8, sizeof(versionStr));
                     continue;
                 }
@@ -707,25 +659,25 @@ namespace Utils {
 
                 if (zeroCnt >= 3 || exceptionCnt >= 1000) {
                     if (zeroCnt >= 3)
-                        printException(versionStr, 0, "工作进程已异常退出", 27);
+                        printException(versionStr, 0, "工作进程已异常退出");
                     else
-                        printException(versionStr, 0, "工作进程已达最大异常次数, 即将强制关闭", 56);
+                        printException(versionStr, 0, "工作进程已达最大异常次数, 即将强制关闭");
 
                     if (kill(pid, SIGKILL) < 0) {
                         char tips[128];
                         auto len = snprintf(tips, sizeof(tips), "杀死 [工作进程 pid:%d] 失败", pid);
                         printException(versionStr, 0, tips, len);
                     }
-                    
 
                     int status = 0;
                     if (waitpid(pid, &status, __WALL) != pid) {
                         char tips[128];
                         auto len = snprintf(tips, sizeof(tips), "waitpid 异常: [%d] HEX[%s]", status,
                             bin2Hex(&status, 4).c_str());
-                            exit(-1);
                         printException(versionStr, 0, tips, len);
-                    }                   
+                    }
+
+                    exit(-1);
                 }
             }
         }
@@ -757,6 +709,7 @@ namespace MAGISK {
         return isdigit(buff[0]) ? atoi(buff) : -1;
     }
 }
+
 namespace APatch {
 	int get_version_code() {
 		int version = -1;
@@ -764,6 +717,7 @@ namespace APatch {
 		return version;
 	}
 }
+
 // https://github.com/tiann/KernelSU/blob/main/manager/app/src/main/cpp/ksu.cc
 namespace KSU {
     const int CMD_GRANT_ROOT = 0;
